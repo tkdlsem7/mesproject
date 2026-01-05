@@ -12,10 +12,13 @@ type EquipmentRow = {
 };
 
 // 프로젝트 설정에 따라 /api 프리픽스를 사용하지 않으면 "" 로 변경
-const API_BASE = "http://192.168.101.1:8000/api";
+export const API_BASE =
+  process.env.NODE_ENV === "production"
+    ? "/api"
+    : "http://localhost:8000/api";
 
 // 요구: 사이트는 3개 고정
-const SITES = ["본사", "진우리", "부항리"] as const;
+const SITES = ["본사", "진우리", "라인대기"] as const;
 
 /* 토큰 → Authorization 헤더 (있는 경우만) */
 const authHeaders = (): Record<string, string> => {
@@ -28,13 +31,17 @@ const authHeaders = (): Record<string, string> => {
 };
 
 /* 공용 카드 래퍼: 얇은 하늘색~청록 그라데이션 바 + 큰 라운드 + 소프트 섀도우 */
-const Shell: React.FC<{ children: React.ReactNode; header?: string; right?: React.ReactNode; className?: string }> = ({
-  children,
-  header,
-  right,
-  className,
-}) => (
-  <section className={`rounded-2xl bg-white shadow-md ring-1 ring-gray-100 ${className ?? ""}`}>
+const Shell: React.FC<{
+  children: React.ReactNode;
+  header?: string;
+  right?: React.ReactNode;
+  className?: string;
+}> = ({ children, header, right, className }) => (
+  <section
+    className={`rounded-2xl bg-white shadow-md ring-1 ring-gray-100 ${
+      className ?? ""
+    }`}
+  >
     <div className="h-2 rounded-t-2xl bg-gradient-to-r from-sky-200 via-cyan-200 to-sky-200" />
     {(header || right) && (
       <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
@@ -48,7 +55,9 @@ const Shell: React.FC<{ children: React.ReactNode; header?: string; right?: Reac
 
 const MoveEquipmentPage: React.FC = () => {
   const nav = useNavigate();
-  const url = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+  const url = new URLSearchParams(
+    typeof window !== "undefined" ? window.location.search : ""
+  );
   const initialSelected = url.get("machine_id") ?? "";
 
   // 선택된 사이트
@@ -66,7 +75,9 @@ const MoveEquipmentPage: React.FC = () => {
   const [checked, setChecked] = React.useState<Record<string, boolean>>(
     initialSelected ? { [initialSelected]: true } : {}
   );
-  const [movePlan, setMovePlan] = React.useState<Record<string, { site?: string; slot?: string }>>({});
+  const [movePlan, setMovePlan] = React.useState<
+    Record<string, { site?: string; slot?: string }>
+  >({});
   const [saving, setSaving] = React.useState(false);
 
   // --- 붙여넣기 UI(디자인만; 기능 잠금) ---
@@ -78,7 +89,10 @@ const MoveEquipmentPage: React.FC = () => {
       setLoading(true);
       setErr(null);
       try {
-        const { data } = await axios.get<{ site: string; items: EquipmentRow[] }>(`${API_BASE}/move/equipments`, {
+        const { data } = await axios.get<{
+          site: string;
+          items: EquipmentRow[];
+        }>(`${API_BASE}/move/equipments`, {
           params: { site },
           withCredentials: true,
           headers: { ...authHeaders() },
@@ -86,12 +100,19 @@ const MoveEquipmentPage: React.FC = () => {
         setRows(data.items ?? []);
 
         // url로 온 machine_id가 있으면 기본 체크/계획 세팅
-        if (initialSelected && (data.items ?? []).some((r) => r.machine_id === initialSelected)) {
+        if (
+          initialSelected &&
+          (data.items ?? []).some((r) => r.machine_id === initialSelected)
+        ) {
           setChecked((m) => ({ ...m, [initialSelected]: true }));
-          setMovePlan((p) => ({ ...p, [initialSelected]: { site, slot: "" } }));
+          setMovePlan((p) => ({
+            ...p,
+            [initialSelected]: { site, slot: "" },
+          }));
         }
       } catch {
         setErr("장비 목록을 불러오지 못했습니다.");
+        setRows([]); // ✅ 실패 시 이전 데이터 제거
       } finally {
         setLoading(false);
       }
@@ -110,10 +131,14 @@ const MoveEquipmentPage: React.FC = () => {
     );
   }, [q, rows]);
 
-  const selectedRows = React.useMemo(() => rows.filter((r) => checked[r.machine_id]), [rows, checked]);
+  const selectedRows = React.useMemo(
+    () => rows.filter((r) => checked[r.machine_id]),
+    [rows, checked]
+  );
 
   const allVisibleChecked =
-    filteredRows.length > 0 && filteredRows.every((r) => !!checked[r.machine_id]);
+    filteredRows.length > 0 &&
+    filteredRows.every((r) => !!checked[r.machine_id]);
 
   const toggleCheckAllVisible = (on: boolean) => {
     setChecked((m) => {
@@ -151,7 +176,7 @@ const MoveEquipmentPage: React.FC = () => {
   const setPlanSlot = (mid: string, v: string) =>
     setMovePlan((p) => ({ ...p, [mid]: { ...p[mid], slot: v.toUpperCase() } }));
 
-  // ✅ 핵심 수정: /move/apply 사용 (장비별 목적지 지정)
+  // ✅ /move/apply 사용 (장비별 목적지 지정)
   const applyMove = async () => {
     const targets = rows
       .filter((r) => checked[r.machine_id])
@@ -185,10 +210,13 @@ const MoveEquipmentPage: React.FC = () => {
         withCredentials: true,
       });
 
+      // 정상 200 응답일 때
       alert("장비 이동이 적용되었습니다.");
 
-      // 재조회
-      const { data } = await axios.get<{ site: string; items: EquipmentRow[] }>(`${API_BASE}/move/equipments`, {
+      const { data } = await axios.get<{
+        site: string;
+        items: EquipmentRow[];
+      }>(`${API_BASE}/move/equipments`, {
         params: { site },
         withCredentials: true,
         headers: { ...authHeaders() },
@@ -199,6 +227,11 @@ const MoveEquipmentPage: React.FC = () => {
     } catch (e: any) {
       const resp = e?.response;
 
+        // ★ 409 응답 전체를 로그로 확인
+      if (resp?.status === 409) {
+        console.log("[409 /move/apply] resp.data =", resp.data);
+      }
+
       // 422 상세 메시지 보이기 (유효성 에러 즉시 확인)
       if (resp?.status === 422) {
         console.warn("[422 detail]", resp.data);
@@ -207,11 +240,45 @@ const MoveEquipmentPage: React.FC = () => {
       }
 
       // 409 (슬롯 점유) 처리
-      if (resp?.status === 409 && resp?.data?.conflicts?.length) {
-        const lines = resp.data.conflicts.map(
-          (c: any) => `- ${c.site} / ${c.slot} 슬롯은 이미 ${c.current_machine_id} 점유 중`
+      if (resp?.status === 409 && Array.isArray(resp?.data?.conflicts)) {
+        const allConflicts: any[] = resp.data.conflicts;
+
+        // 진우리 이외의 충돌
+        const nonJinuri = allConflicts.filter(
+          (c) => String(c.site) !== "진우리"
         );
-        alert(`이동 불가 슬롯이 있습니다:\n${lines.join("\n")}`);
+
+        // 1) 본사/부항리 등 실제로 막아야 하는 충돌이 있으면 → 기존처럼 에러
+        if (nonJinuri.length > 0) {
+          const lines = nonJinuri.map(
+            (c: any) =>
+              `- ${c.site} / ${c.slot} 슬롯은 이미 ${c.current_machine_id} 점유 중`
+          );
+          alert(`이동 불가 슬롯이 있습니다:\n${lines.join("\n")}`);
+          return;
+        }
+
+        // 2) 여기까지 왔으면 "진우리 관련 충돌만 있는 409" → 성공 플로우로 간주
+        try {
+          alert("장비 이동이 적용되었습니다. (진우리 슬롯 중복 허용)");
+
+          const { data } = await axios.get<{
+            site: string;
+            items: EquipmentRow[];
+          }>(`${API_BASE}/move/equipments`, {
+            params: { site },
+            withCredentials: true,
+            headers: { ...authHeaders() },
+          });
+          setRows(data.items ?? []);
+          setChecked({});
+          setMovePlan({});
+        } catch (reloadErr) {
+          console.error(reloadErr);
+          alert(
+            "이동은 처리된 것으로 간주했지만, 목록 재조회 중 오류가 발생했습니다."
+          );
+        }
         return;
       }
 
@@ -293,8 +360,12 @@ const MoveEquipmentPage: React.FC = () => {
               </div>
             }
           >
-            {loading && <div className="px-5 py-4 text-sm text-gray-500">로딩 중…</div>}
-            {err && <div className="px-5 py-3 text-sm text-red-600">{err}</div>}
+            {loading && (
+              <div className="px-5 py-4 text-sm text-gray-500">로딩 중…</div>
+            )}
+            {err && (
+              <div className="px-5 py-3 text-sm text-red-600">{err}</div>
+            )}
 
             <div className="max-h-[520px] overflow-auto">
               <table className="min-w-full text-sm">
@@ -305,7 +376,9 @@ const MoveEquipmentPage: React.FC = () => {
                         type="checkbox"
                         className="h-4 w-4 accent-sky-600"
                         checked={allVisibleChecked}
-                        onChange={(e) => toggleCheckAllVisible(e.currentTarget.checked)}
+                        onChange={(e) =>
+                          toggleCheckAllVisible(e.currentTarget.checked)
+                        }
                         aria-label="전체 선택"
                       />
                     </th>
@@ -317,7 +390,10 @@ const MoveEquipmentPage: React.FC = () => {
                 <tbody className="divide-y">
                   {filteredRows.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-3 py-8 text-center text-gray-500">
+                      <td
+                        colSpan={4}
+                        className="px-3 py-8 text-center text-gray-500"
+                      >
                         표시할 장비가 없습니다.
                       </td>
                     </tr>
@@ -333,7 +409,9 @@ const MoveEquipmentPage: React.FC = () => {
                             aria-label={`${r.machine_id} 선택`}
                           />
                         </td>
-                        <td className="px-3 py-2 text-slate-800">{r.machine_id}</td>
+                        <td className="px-3 py-2 text-slate-800">
+                          {r.machine_id}
+                        </td>
                         <td className="px-3 py-2 text-slate-700">{r.site}</td>
                         <td className="px-3 py-2 text-slate-700">{r.slot}</td>
                       </tr>
@@ -360,7 +438,10 @@ const MoveEquipmentPage: React.FC = () => {
                 <tbody className="divide-y">
                   {selectedRows.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-3 py-8 text-center text-gray-500">
+                      <td
+                        colSpan={5}
+                        className="px-3 py-8 text-center text-gray-500"
+                      >
                         좌측에서 이동할 장비를 선택하세요.
                       </td>
                     </tr>
@@ -369,14 +450,22 @@ const MoveEquipmentPage: React.FC = () => {
                       const plan = movePlan[r.machine_id] || {};
                       return (
                         <tr key={r.machine_id} className="hover:bg-gray-50">
-                          <td className="px-3 py-2 text-slate-800">{r.machine_id}</td>
-                          <td className="px-3 py-2 text-slate-700">{r.site}</td>
-                          <td className="px-3 py-2 text-slate-700">{r.slot}</td>
+                          <td className="px-3 py-2 text-slate-800">
+                            {r.machine_id}
+                          </td>
+                          <td className="px-3 py-2 text-slate-700">
+                            {r.site}
+                          </td>
+                          <td className="px-3 py-2 text-slate-700">
+                            {r.slot}
+                          </td>
                           <td className="px-3 py-2">
                             <select
                               className="rounded-full border border-gray-200 px-3 py-1.5 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
                               value={plan.site ?? ""}
-                              onChange={(e) => setPlanSite(r.machine_id, e.target.value)}
+                              onChange={(e) =>
+                                setPlanSite(r.machine_id, e.target.value)
+                              }
                             >
                               <option value="">선택</option>
                               {SITES.map((s) => (
@@ -391,7 +480,9 @@ const MoveEquipmentPage: React.FC = () => {
                               className="w-32 rounded-full border border-gray-200 px-3 py-1.5 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
                               placeholder="새 Slot"
                               value={plan.slot ?? ""}
-                              onChange={(e) => setPlanSlot(r.machine_id, e.target.value)}
+                              onChange={(e) =>
+                                setPlanSlot(r.machine_id, e.target.value)
+                              }
                             />
                           </td>
                         </tr>
@@ -451,8 +542,13 @@ const MoveEquipmentPage: React.FC = () => {
             </div>
           </div>
           <ul className="text-xs text-slate-500 space-y-1 px-5 pb-5">
-            <li>• 방향 줄은 반드시 포함: 예) <b>진우리 -&gt; 본사(라인)</b></li>
-            <li>• 본문은 <code>D(e)-11-06&nbsp;&nbsp;G-01</code> 형식, <code>(e)</code>는 자동 제거됩니다.</li>
+            <li>
+              • 방향 줄은 반드시 포함: 예) <b>진우리 -&gt; 본사(라인)</b>
+            </li>
+            <li>
+              • 본문은 <code>D(e)-11-06&nbsp;&nbsp;G-01</code> 형식,{" "}
+              <code>(e)</code>는 자동 제거됩니다.
+            </li>
             <li>• 이 영역은 현재 디자인만 제공됩니다.</li>
           </ul>
         </Shell>

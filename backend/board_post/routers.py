@@ -44,7 +44,7 @@ def board_summary(
     )
     changes = (
         db.query(models.BoardPost)
-        .filter(models.BoardPost.category == "변경점")
+        .filter(models.BoardPost.category == "적용사항")
         .order_by(models.BoardPost.created_at.desc(), models.BoardPost.no.desc())
         .limit(limit).all()
     )

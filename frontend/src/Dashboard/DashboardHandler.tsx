@@ -1,33 +1,37 @@
-// 대시보드 API 유틸 (fetch만, 훅 없음)
-
-// -------------------- ENV & URL 조립 --------------------
 type AnyEnv = Record<string, any>;
 
 const getEnv = () => {
-  const viteEnv: AnyEnv = ((import.meta as any)?.env ?? {}) as AnyEnv; // Vite
+  // CRA 환경변수만 사용 (REACT_APP_... 형태)
   const craEnv: AnyEnv =
-    (typeof process !== "undefined" ? (process as any)?.env : {}) ?? {}; // CRA
+    (typeof process !== "undefined" ? (process as any).env : {}) || {};
+
+  const nodeEnv = craEnv.NODE_ENV || process.env.NODE_ENV || "development";
 
   // 1) .env에 값이 있으면 그거 사용
-  let API_BASE = String(
-    viteEnv.VITE_API_BASE || craEnv.REACT_APP_API_BASE || ""
-  ).replace(/\/+$/, "");
+  //    예: REACT_APP_API_BASE=http://backend:8000  (docker dev)
+  //        REACT_APP_API_BASE=http://192.168.101.1:8000 (서버 직접)
+  let API_BASE = String(craEnv.REACT_APP_API_BASE || "").replace(/\/+$/, "");
 
-  // 2) 아무것도 없으면 우리 서버 기본값으로 고정
+  // 2) 없으면 개발/운영에 따라 기본값
   if (!API_BASE) {
-    API_BASE = "http://192.168.101.1:8000";
+    if (nodeEnv === "development") {
+      // 로컬 개발: 도커 dev 백엔드
+      API_BASE = "http://localhost:8000";
+    } else {
+      // 운영: 동일 출처(/api 프록시) 사용 → BASE 비워두기
+      API_BASE = "";
+    }
   }
 
-  // PREFIX: 'api' 또는 '/api' 모두 허용, 기본은 '/api'
-  const rawPrefix =
-    viteEnv.VITE_API_PREFIX ?? craEnv.REACT_APP_API_PREFIX ?? "/api";
+  // PREFIX: 기본은 '/api'
+  // .env에 REACT_APP_API_PREFIX가 있으면 그걸로 덮어씀
+  const rawPrefix = craEnv.REACT_APP_API_PREFIX ?? "/api";
   const API_PREFIX = rawPrefix
     ? `/${String(rawPrefix).replace(/^\/+/, "").replace(/\/+$/, "")}`
     : "";
 
   return { API_BASE, API_PREFIX };
 };
-
 
 const { API_BASE, API_PREFIX } = getEnv();
 

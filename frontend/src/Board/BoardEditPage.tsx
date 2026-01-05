@@ -3,10 +3,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 
-const API_BASE = "http://192.168.101.1:8000/api";
+export const API_BASE =
+  process.env.NODE_ENV === "production" ? "/api" : "http://localhost:8000/api";
 
-type Category = '공지사항' | '변경점';
-const CATEGORIES: Category[] = ['공지사항', '변경점'];
+type Category = '공지사항' | '적용사항';
+const CATEGORIES: Category[] = ['공지사항', '적용사항'];
 
 type BoardPost = {
   no: number;
@@ -45,7 +46,7 @@ const BoardEditPage: React.FC = () => {
         setTitle(res.data.title || '');
         setContent(res.data.content || '');
         const cat = res.data.category as Category;
-        setCategory(cat === '변경점' ? '변경점' : '공지사항');
+        setCategory(cat === '적용사항' ? '적용사항' : '공지사항');
       } catch (e: any) {
         console.error(e);
         if (alive) setErr('글을 불러오지 못했습니다.');

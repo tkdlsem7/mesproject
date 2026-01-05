@@ -64,7 +64,9 @@ function buildIntentFromRow(row: SlotRow): InfoIntent {
 }
 
 function storeIntent(intent: InfoIntent) {
-  try { localStorage.setItem(LS.INTENT, JSON.stringify(intent)); } catch {}
+  try {
+    localStorage.setItem(LS.INTENT, JSON.stringify(intent));
+  } catch {}
   (window as any).__MACHINE_INFO_INTENT__ = intent;
 }
 
@@ -90,6 +92,12 @@ type LineSectionProps = {
   onShipped?: (slotCode: string) => void;
 };
 
+type Cell = {
+  code: string;        // 실제 slotCode (예: E6)
+  label: string;       // 화면 라벨 (예: E6)
+  disabled?: boolean;  // E5 사용불가 처리
+};
+
 function LineSection({
   lineChar,
   equipMap,
@@ -102,20 +110,63 @@ function LineSection({
   goMove,
   onShipped,
 }: LineSectionProps) {
-  const codes = useMemo(
-    () => Array.from({ length: 10 }, (_, i) => `${lineChar}${i + 1}`),
-    [lineChar]
-  );
+  // ✅ 2행 5열에서 "오른쪽→왼쪽"으로 번호 증가
+  // 1행: 5,4,3,2,1 (오른쪽이 1)
+  // 2행: 10,9,8,7,6 (1 아래가 6)
+  // ✅ E라인: E5 위치만 "사용불가" (E6는 그대로 E6로 표시/유지)
+  const cells = useMemo<Cell[]>(() => {
+    const COLS = 5;
+    const TOTAL = 10;
+
+    const result: Cell[] = [];
+    const rows = Math.ceil(TOTAL / COLS);
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const num = r * COLS + (COLS - c); // 오른쪽이 작은 번호
+        if (num > TOTAL) continue;
+
+        const code = `${lineChar}${num}`;
+        const label = `${lineChar}${num}`;
+
+        if (lineChar === "E" && num === 5) {
+          // ✅ E5 "자리"는 유지하되, 클릭 불가/사용불가로 표시 (E6이 당겨지지 않게)
+          result.push({ code, label, disabled: true });
+        } else {
+          result.push({ code, label });
+        }
+      }
+    }
+    return result;
+  }, [lineChar]);
 
   return (
     <section className="mb-14">
       <h3 className="mb-5 text-xl sm:text-2xl font-semibold text-slate-900">{lineChar}라인</h3>
 
-      <div className={`grid grid-cols-5 ${GAP}`}>
-        {codes.map((code) => {
+      {/* ✅ 라인별 스크롤 제거: 대신 grid 자체를 내용폭(w-max)으로 만들고,
+          상위(ABuildingView)에서 전체 가로 스크롤이 생기게 함 */}
+      <div className={`grid grid-cols-5 ${GAP} w-max`}>
+        {cells.map(({ code, label, disabled }) => {
+          const baseTile = `rounded-2xl shadow-md ${TILE_W} ${TILE_H}`;
+
+          // ✅ E5 사용불가 자리
+          if (disabled) {
+            return (
+              <div key={`${code}-disabled`} className="flex flex-col items-center">
+                <div className="mb-2 text-xs font-medium text-slate-500">{label}</div>
+                <div
+                  className={`${baseTile} bg-slate-100/60 border border-dashed border-slate-300 flex items-center justify-center`}
+                  title="사용 불가 슬롯"
+                >
+                  <span className="text-xs text-slate-400">사용불가</span>
+                </div>
+              </div>
+            );
+          }
+
           const row = equipMap.get(code.toUpperCase()) ?? null;
           const isHighlight = !!row && highlightedSlot === row?.slot_code;
-          const baseTile = `rounded-2xl shadow-md ${TILE_W} ${TILE_H}`;
 
           if (row && row.machine_id) {
             const machineId = row.machine_id as string;
@@ -123,14 +174,14 @@ function LineSection({
 
             return (
               <div key={code} className="flex flex-col items-center">
-                <div className="mb-2 text-xs font-medium text-slate-500">{code}</div>
+                <div className="mb-2 text-xs font-medium text-slate-500">{label}</div>
                 <div className={isHighlight ? pulseRing : ""}>
                   <MachineButton
                     title={machineId}
                     progress={row.progress ?? 0}
                     shipDate={row.shipping_date ?? null}
                     manager={row.manager ?? null}
-                    slotCode={row.slot_code}                   // ✅ 필수
+                    slotCode={row.slot_code} // ✅ 실제 slot_code
                     sizeClass={`${TILE_W} ${TILE_H}`}
                     isOpen={isOpen}
                     onToggleMenu={() => onToggleMenu(row.slot_code)}
@@ -147,11 +198,13 @@ function LineSection({
           // 빈 슬롯
           return (
             <div key={code} className="flex flex-col items-center">
-              <div className="mb-2 text-xs font-medium text-slate-500">{code}</div>
+              <div className="mb-2 text-xs font-medium text-slate-500">{label}</div>
               <button
                 type="button"
                 onClick={() => goInfoCreate(code)}
-                className={`${baseTile} bg-slate-100 ${isHighlight ? pulseRing : ""} flex items-center justify-center hover:ring-2 hover:ring-indigo-300`}
+                className={`${baseTile} bg-slate-100 ${
+                  isHighlight ? pulseRing : ""
+                } flex items-center justify-center hover:ring-2 hover:ring-indigo-300`}
                 title="장비 정보 입력으로 이동"
               >
                 <span className="text-xs text-slate-400">빈 슬롯</span>
@@ -190,6 +243,7 @@ export default function ABuildingView({
   const onToggleMenu = useCallback((slotCode: string) => {
     setOpenMenuId((cur) => (cur === slotCode ? null : slotCode));
   }, []);
+
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const el = e.target as HTMLElement;
@@ -264,42 +318,49 @@ export default function ABuildingView({
   };
 
   return (
-    <div className="grid grid-cols-2 gap-12">
-      <div className="pr-12 border-r">
-        <Legend />
-        {LEFT.map((g) => (
-          <LineSection
-            key={g}
-            lineChar={g}
-            equipMap={equipMap}
-            highlightedSlot={highlightedSlot}
-            openMenuId={openMenuId}
-            onToggleMenu={onToggleMenu}
-            goInfoCreate={goInfoCreate}
-            goInfoEdit={goInfoEdit}
-            goChecklist={goChecklist}
-            goMove={goMove}
-            onShipped={onShipped}
-          />
-        ))}
-      </div>
-      <div className="pl-12">
-        <Legend />
-        {RIGHT.map((g) => (
-          <LineSection
-            key={g}
-            lineChar={g}
-            equipMap={equipMap}
-            highlightedSlot={highlightedSlot}
-            openMenuId={openMenuId}
-            onToggleMenu={onToggleMenu}
-            goInfoCreate={goInfoCreate}
-            goInfoEdit={goInfoEdit}
-            goChecklist={goChecklist}
-            goMove={goMove}
-            onShipped={onShipped}
-          />
-        ))}
+    // ✅ "라인별 스크롤"이 아니라 "전체 스크롤"이 생기도록 바깥에서 처리
+    <div className="overflow-x-auto">
+      {/* 내용 폭이 좁아져서 깨지지 않도록, 내부를 내용 기준(w-max)로 확장 */}
+      <div className="w-max">
+        <div className="grid grid-cols-2 gap-12">
+          <div className="pr-12 border-r">
+            <Legend />
+            {LEFT.map((g) => (
+              <LineSection
+                key={g}
+                lineChar={g}
+                equipMap={equipMap}
+                highlightedSlot={highlightedSlot}
+                openMenuId={openMenuId}
+                onToggleMenu={onToggleMenu}
+                goInfoCreate={goInfoCreate}
+                goInfoEdit={goInfoEdit}
+                goChecklist={goChecklist}
+                goMove={goMove}
+                onShipped={onShipped}
+              />
+            ))}
+          </div>
+
+          <div className="pl-12">
+            <Legend />
+            {RIGHT.map((g) => (
+              <LineSection
+                key={g}
+                lineChar={g}
+                equipMap={equipMap}
+                highlightedSlot={highlightedSlot}
+                openMenuId={openMenuId}
+                onToggleMenu={onToggleMenu}
+                goInfoCreate={goInfoCreate}
+                goInfoEdit={goInfoEdit}
+                goChecklist={goChecklist}
+                goMove={goMove}
+                onShipped={onShipped}
+              />
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

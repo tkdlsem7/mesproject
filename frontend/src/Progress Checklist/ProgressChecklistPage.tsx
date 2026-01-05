@@ -3,7 +3,17 @@ import React from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
-const API_BASE = "http://192.168.101.1:8000/api";
+export const API_BASE =
+  process.env.NODE_ENV === "production"
+    ? "/api"
+    : "http://localhost:8000/api";
+
+const toYMD = (d: Date) => {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
 
 type ChecklistItem = {
   no: number;
@@ -52,6 +62,9 @@ const ProgressChecklistPage: React.FC = () => {
   const machineId = qpId || lsId;
 
   const [data, setData] = React.useState<ChecklistResponse | null>(null);
+
+  // ✅ 추가: 로그 날짜(기본=오늘)
+  const [logDate, setLogDate] = React.useState<string>(() => toYMD(new Date()));
 
   // 옵션별 체크 맵: { hot: { 1:true, 3:true }, "5825": {...} }
   const [checkedByOption, setCheckedByOption] = React.useState<Record<string, Record<number, boolean>>>({});
@@ -131,10 +144,14 @@ const ProgressChecklistPage: React.FC = () => {
       return { option: p.option, checked_steps: checkedNos };
     });
 
+    // ✅ 기존 payload는 그대로 두고, log_date만 옵션으로 추가
+    const payload: any = { machine_id: machineId, items };
+    if (logDate) payload.log_date = logDate; // "YYYY-MM-DD"
+
     try {
       await axios.post(
         `${API_BASE}/progress/checklist/result/batch`,
-        { machine_id: machineId, items },
+        payload,
         { headers: { "Content-Type": "application/json" } }
       );
       alert("진척도 저장 완료.");
@@ -152,11 +169,24 @@ const ProgressChecklistPage: React.FC = () => {
         <Shell header="진척도 체크리스트">
           <div className="p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm text-slate-600">
-                Machine&nbsp;
-                <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-800">
-                  {machineId || "미지정"}
-                </span>
+              {/* ✅ Machine + 날짜 입력 (요청하신 위치: 장비 번호 옆) */}
+              <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
+                <div>
+                  Machine&nbsp;
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-800">
+                    {machineId || "미지정"}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500">날짜</span>
+                  <input
+                    type="date"
+                    value={logDate}
+                    onChange={(e) => setLogDate(e.currentTarget.value)}
+                    className="rounded-full bg-white px-3 py-1.5 text-sm text-slate-700 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                  />
+                </div>
               </div>
 
               {/* 요약 칩들 */}
@@ -226,7 +256,6 @@ const ProgressChecklistPage: React.FC = () => {
                           <span className="rounded-full bg-slate-800 px-2 py-[2px] text-xs text-white">{p.option}</span>
                           <span className="text-xs text-slate-500">Step ({p.item_count}개)</span>
                           <span className="ml-2 text-xs text-slate-400">합계 {p.total_hours}h</span>
-                          {/* 그룹 토글 힌트 */}
                           <span className="text-xs text-slate-400">· 전체 선택/해제</span>
                         </span>
                       </td>

@@ -1,6 +1,6 @@
 # schemas.py
 from __future__ import annotations
-from typing import Optional, List
+from typing import Optional
 from datetime import date, datetime
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -22,6 +22,12 @@ class Step(_Base):
     defect_detail: Optional[str] = None
     quality_score: Optional[int] = Field(default=None, ge=0, le=100)
     ts_hours: Optional[float] = Field(default=None, ge=0)
+
+    hw_sw: Optional[str] = None
+    defect: Optional[str] = None
+    defect_type: Optional[str] = None
+    defect_group: Optional[str] = None
+    defect_location: Optional[str] = None
 
 class SaveRequest(_Base):
     sheetId: Optional[int] = None
@@ -46,4 +52,27 @@ class RowRead(_Base):
     defect_detail: Optional[str]
     quality_score: Optional[int]
     ts_hours: Optional[float]
+
+    hw_sw: Optional[str]
+    defect: Optional[str]
+    defect_type: Optional[str]
+    defect_group: Optional[str]
+    defect_location: Optional[str]
+
     created_at: datetime
+
+# ✅ [추가] 공통사항 조회(호기 기준 1건만 대표로 내려줌)
+class CommonRowRead(_Base):
+    machine_no: Optional[str]
+    sn: Optional[str]
+    chiller_sn: Optional[str]
+    setup_start_date: Optional[date]
+    setup_end_date: Optional[date]
+
+# ✅ [추가] 공통사항 일괄 수정(기존 호기(old_machine_no) 기준으로 전체 업데이트)
+class CommonUpdateRequest(_Base):
+    old_machine_no: str
+    meta: Meta
+
+class CommonUpdateResponse(_Base):
+    updated: int

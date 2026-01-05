@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: mes_dev
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -34,7 +34,9 @@ services:
       - ./backend:/app/backend            # ← 백엔드 루트를 /app으로 바인드
     working_dir: /app
     environment:
-      - PYTHONPATH=/app         # ← /app을 파이썬 모듈 경로로
+      - PYTHONPATH=/app
+      # ⬇⬇⬇ 이 줄 추가 (dev DB 비번 postgres에 맞춘 URL)
+      - DATABASE_URL=postgresql+psycopg2://postgres:postgres123%21@db:5432/mes_dev
     command: uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
   # ──────────────────────────

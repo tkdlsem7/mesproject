@@ -1,7 +1,8 @@
 # backend/ProgressChecklist/schemas.py
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
+from datetime import date
 from pydantic import BaseModel, Field
 
 
@@ -20,7 +21,6 @@ class ChecklistPageOut(BaseModel):
     total_hours: float
     item_count: int
     items: List[ChecklistItemOut]
-    # 이미 저장된 체크 항목들(없으면 빈 배열)
     checked_steps: List[int] = Field(default_factory=list)
 
 
@@ -37,6 +37,9 @@ class SaveChecklistIn(BaseModel):
     option: str
     checked_steps: List[int] = Field(default_factory=list)
 
+    # ✅ 추가: 로그에 찍힐 날짜(YYYY-MM-DD). 안 주면 기존처럼 now()
+    log_date: Optional[date] = None
+
 
 class SaveChecklistOut(BaseModel):
     ok: bool
@@ -52,6 +55,9 @@ class SaveChecklistItem(BaseModel):
 class SaveChecklistBatchIn(BaseModel):
     machine_id: str
     items: List[SaveChecklistItem] = Field(default_factory=list)
+
+    # ✅ 추가: 로그에 찍힐 날짜(YYYY-MM-DD). 안 주면 기존처럼 now()
+    log_date: Optional[date] = None
 
 
 class SaveChecklistBatchOut(BaseModel):

@@ -5,8 +5,8 @@ import type { SlotRow } from "./DashboardHandler";
 
 const TILE_W = "w-[240px]";
 const TILE_H = "h-[140px]";
-const WRAP   = "mx-auto max-w-[1100px] px-2 md:px-4";
-const GAP    = "gap-10 md:gap-12";
+const WRAP = "mx-auto max-w-[1100px] px-2 md:px-4";
+const GAP = "gap-10 md:gap-12";
 const pulseRing = "ring-4 ring-indigo-400 ring-offset-2 animate-pulse";
 
 const LS = {
@@ -42,6 +42,7 @@ function buildIntentFromRow(row: SlotRow): InfoIntent {
   const progressEmpty = !Number.isFinite(p);
   const shipDateEmpty = !row.shipping_date || String(row.shipping_date).trim().length === 0;
   const managerEmpty = !row.manager || String(row.manager).trim().length === 0;
+
   return {
     machineId: (row.machine_id ?? "").trim(),
     fields: { progressEmpty, shipDateEmpty, managerEmpty },
@@ -62,10 +63,11 @@ function buildIntentFromRow(row: SlotRow): InfoIntent {
 }
 
 function storeIntent(intent: InfoIntent) {
-  try { localStorage.setItem("machine_info_intent", JSON.stringify(intent)); } catch {}
+  try {
+    localStorage.setItem(LS.INTENT, JSON.stringify(intent));
+  } catch {}
   (window as any).__MACHINE_INFO_INTENT__ = intent;
 }
-
 
 function setForCreate(slot: string, site = "본사", lineLabel = "I동") {
   try {
@@ -77,6 +79,7 @@ function setForCreate(slot: string, site = "본사", lineLabel = "I동") {
     localStorage.removeItem(LS.INTENT);
   } catch {}
 }
+
 function setForEdit(slot: string, machineId: string, site = "본사", lineLabel = "I동") {
   try {
     localStorage.setItem(LS.SELECTED_SITE, site);
@@ -96,48 +99,62 @@ type Props = {
 
 const IBuildingView: React.FC<Props> = ({ equipMap, highlightedSlot, onShipped }) => {
   const navigate = useNavigate();
-  const top = useMemo(() => ["I5", "I6", "I7", "I8"], []);
-  const bottom = useMemo(() => ["I1", "I2", "I3", "I4"], []);
+
+  // ✅ 배치 목표:
+  // 왼쪽 위→아래: I1 I2 I3 I4
+  // 오른쪽 위→아래: I5 I6 I7 I8
+  // grid-cols-2 는 "행 우선"으로 채워지므로, 아래 순서로 렌더하면 원하는 열 구성이 됨.
+  const slots = useMemo(
+    () => ["I1", "I5", "I2", "I6", "I3", "I7", "I4", "I8"],
+    []
+  );
 
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const onToggleMenu = (slot: string) => setOpenMenuId(cur => (cur === slot ? null : slot));
+  const onToggleMenu = (slot: string) => setOpenMenuId((cur) => (cur === slot ? null : slot));
 
   const goInfoCreate = (slot: string) => {
     setForCreate(slot, "본사", "I동");
     const qs = new URLSearchParams({ mode: "create", site: "본사", line: "I동", slot });
     navigate(`/equipment?${qs.toString()}`);
   };
-    const goInfoEdit = (slot: string, machineId: string) => {
-    // 슬롯 row 찾아 INTENT 저장 → 폼 프리필
+
+  const goInfoEdit = (slot: string, machineId: string) => {
     const row = equipMap.get(slot.toUpperCase());
     if (row) storeIntent(buildIntentFromRow(row));
 
-    setForEdit(slot, machineId, "본사", "B동"); // I동이면 "I동"
-    const qs = new URLSearchParams({ mode: "edit", site: "본사", line: "B동", slot, machine: machineId });
+    setForEdit(slot, machineId, "본사", "I동");
+    const qs = new URLSearchParams({
+      mode: "edit",
+      site: "본사",
+      line: "I동",
+      slot,
+      machine: machineId,
+    });
     navigate(`/equipment?${qs.toString()}`);
-    };
+  };
+
   const goChecklist = (slot: string, machineId: string) =>
     navigate(`/progress-checklist?machine_id=${encodeURIComponent(machineId)}`);
 
   const goMove = (slot: string, machineId: string) => {
-        try {
-            localStorage.setItem("selected_site", "본사");
-            localStorage.setItem("selected_line", "B동"); // I동이면 I동
-            localStorage.setItem("selected_slot", slot);
-            localStorage.setItem("selected_machine_is_empty", "0");
-            localStorage.setItem("selected_machine_id", machineId.trim());
-            localStorage.setItem("selected_machine_saved_at", new Date().toISOString());
-        } catch {}
+    try {
+      localStorage.setItem(LS.SELECTED_SITE, "본사");
+      localStorage.setItem(LS.SELECTED_LINE, "I동");
+      localStorage.setItem(LS.SELECTED_SLOT, slot);
+      localStorage.setItem(LS.SELECTED_IS_EMPTY, "0");
+      localStorage.setItem(LS.SELECTED_ID, machineId.trim());
+      localStorage.setItem(LS.SELECTED_AT, new Date().toISOString());
+    } catch {}
 
-        const qs = new URLSearchParams({
-            machine_id: machineId.trim(),
-            site: "본사",
-            line: "B동", // I동이면 I동
-            slot,        // ★ A동과 동일하게 slot 사용
-        });
-        navigate(`/machine-move?${qs.toString()}`); // ★ 경로도 A동과 동일
+    const qs = new URLSearchParams({
+      machine_id: machineId.trim(),
+      site: "본사",
+      line: "I동",
+      slot,
+    });
+
+    navigate(`/machine-move?${qs.toString()}`);
   };
-
 
   const renderCell = (code: string) => {
     const row = equipMap.get(code.toUpperCase()) ?? null;
@@ -146,6 +163,7 @@ const IBuildingView: React.FC<Props> = ({ equipMap, highlightedSlot, onShipped }
     if (row?.machine_id) {
       const machineId = String(row.machine_id);
       const isOpen = openMenuId === row.slot_code;
+
       return (
         <div key={code} className="flex flex-col items-center">
           <div className="mb-2 text-xs font-medium text-slate-500">{code}</div>
@@ -186,11 +204,9 @@ const IBuildingView: React.FC<Props> = ({ equipMap, highlightedSlot, onShipped }
 
   return (
     <div className={`${WRAP} flex flex-col gap-12 md:gap-16`}>
-      <div className={`grid grid-cols-4 sm:grid-cols-2 place-items-center ${GAP}`}>
-        {top.map(renderCell)}
-      </div>
-      <div className={`grid grid-cols-4 sm:grid-cols-2 place-items-center ${GAP}`}>
-        {bottom.map(renderCell)}
+      {/* ✅ 2열(좌/우) × 4행(위→아래) */}
+      <div className={`grid grid-cols-2 grid-rows-4 place-items-center ${GAP}`}>
+        {slots.map(renderCell)}
       </div>
     </div>
   );

@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
 // CRA/Vite 공용: 환경변수 → 없으면 '/api'
-const API_BASE = "http://192.168.101.1:8000/api";
+export const API_BASE =
+  process.env.NODE_ENV === "production" ? "/api" : "http://localhost:8000/api";
 
 type BoardPost = {
   no: number;

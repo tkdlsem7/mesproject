@@ -6,7 +6,7 @@ services:
     container_name: lineproject-db
     restart: unless-stopped
     environment:
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: postgres123!
       POSTGRES_DB: mes_dev
     volumes:
       - pgdata:/var/lib/postgresql/data

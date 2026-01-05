@@ -1,8 +1,4 @@
 // App.tsx
-// - 로그인(/) / 메인(/main) / 대시보드(/dashboard) / 옵션(/options, /options/modify/:id)
-// - "토큰 기반" 가드(RequireAuth)만 사용 → 토큰 있으면 절대 로그인으로 튕기지 않음
-// - 와일드카드는 마지막에만 배치
-
 import React from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 
@@ -23,8 +19,12 @@ import BoardEditPage from "./Board/BoardEditPage";
 import BoardDetailPage from "./Board/BoardDetailPage";
 
 import LogTableBrowser from "./logtable/LogTableBrowser";
-import LogChartPage from  "./LogChart/LogChartPage"
+import LogChartPage from "./LogChart/LogChartPage";
+import EquipmentGanttPage from "./Calender/EquipmentGanttPage";
 
+// ✅ 추가: 캘린더 라우트용 페이지 import
+import EquipmentCalendarPage from "./Calender/EquipmentCalendarPage";
+import CalendarExcelUploadPage from "./Calender/ScheduleExcelUploadPage";
 
 // ✅ 토큰만 확인하는 최소 가드
 const RequireAuth: React.FC<{ children: React.ReactElement }> = ({ children }) => {
@@ -36,7 +36,6 @@ const RequireAuth: React.FC<{ children: React.ReactElement }> = ({ children }) =
   return children;
 };
 
-// 메인에 표시할 이름 헬퍼
 const getUserName = () => {
   const n = localStorage.getItem("user_name");
   return n && n.trim() ? n : "조성국";
@@ -45,13 +44,9 @@ const getUserName = () => {
 export default function App() {
   return (
     <Routes>
-      {/* ① 로그인 (공개) */}
       <Route path="/" element={<LoginForm />} />
-
-      {/* ② 메인 (공개) */}
       <Route path="/main" element={<MainPage userName={getUserName()} />} />
 
-      {/* ③ 대시보드 — 토큰 필요 */}
       <Route
         path="/dashboard"
         element={
@@ -61,7 +56,6 @@ export default function App() {
         }
       />
 
-      {/* ④ 옵션 — 토큰 필요 */}
       <Route
         path="/options"
         element={
@@ -79,21 +73,18 @@ export default function App() {
         }
       />
 
-      {/* 기타 페이지(필요시 공개 유지) */}
       <Route path="/equipment" element={<EquipmentInfoPage />} />
       <Route path="/progress-checklist" element={<ProgressChecklistPage />} />
       <Route path="/machine-move" element={<MoveEquipmentPage />} />
       <Route path="/troubleshoot" element={<TroubleShootPage />} />
       <Route path="/SetupDefectEntryPage" element={<SetupDefectEntryPages />} />
 
-      {/* ✅ 게시판 라우트 정리 */}
-      {/* 목록/상세: 공개 (읽기 전용) */}
       <Route path="/board" element={<BoardPage />} />
       <Route path="/board/:no" element={<BoardDetailPage />} />
       <Route path="/logs/table" element={<LogTableBrowser />} />
       <Route path="/log/charts" element={<LogChartPage />} />
+      <Route path="/gantt" element={<EquipmentGanttPage />} />
 
-      {/* 글쓰기/수정: 토큰 필요 */}
       <Route
         path="/board/new"
         element={
@@ -111,10 +102,25 @@ export default function App() {
         }
       />
 
-      {/* 과거 경로 호환: /BoardPage → /board */}
-      <Route path="/BoardPage" element={<Navigate to="/board" replace />} />
+      {/* ✅ 추가: 캘린더 + 업로드 라우트 */}
+      <Route
+        path="/calendar"
+        element={
+          <RequireAuth>
+            <EquipmentCalendarPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/calendar/upload"
+        element={
+          <RequireAuth>
+            <CalendarExcelUploadPage />
+          </RequireAuth>
+        }
+      />
 
-      {/* ⑥ 나머지 경로는 로그인으로 */}
+      <Route path="/BoardPage" element={<Navigate to="/board" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

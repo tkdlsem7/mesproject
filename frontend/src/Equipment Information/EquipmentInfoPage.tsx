@@ -5,7 +5,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 /* -----------------------------------------------------------------------------
   공통 유틸
 ----------------------------------------------------------------------------- */
-const API_BASE = "http://192.168.101.1:8000/api";
+export const API_BASE =
+  process.env.NODE_ENV === "production" ? "/api" : "http://localhost:8000/api";
 
 const authHeaders = (): Record<string, string> => {
   const t = localStorage.getItem("access_token");
@@ -37,6 +38,39 @@ async function fetchAllTaskOptions(): Promise<OptionRow[]> {
   return Array.isArray(list) ? list : [];
 }
 
+// (선택) 이미 저장된 입고일을 불러올 수 있도록 “있으면” 조회
+// - 백엔드에 해당 엔드포인트가 없으면 조용히 무시됩니다.
+async function tryFetchReceiptDate(machineId: string): Promise<string | null> {
+  const mid = machineId.trim();
+  if (!mid) return null;
+
+  const tryUrls = [
+    `${API_BASE}/dashboard/equipment/receipt-date/${encodeURIComponent(mid)}`,
+    `${API_BASE}/dashboard/equipment/receipt-date?machine_no=${encodeURIComponent(mid)}`,
+  ];
+
+  for (const url of tryUrls) {
+    try {
+      const res = await fetch(url, {
+        credentials: "include",
+        headers: { ...authHeaders() },
+      });
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      const v =
+        typeof data === "string"
+          ? data
+          : (data?.receive_date ?? data?.receiveDate ?? data?.date ?? null);
+
+      if (typeof v === "string" && v.trim()) return v.slice(0, 10);
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
 const safeGet = (k: string) => {
   try {
     const v = localStorage.getItem(k);
@@ -60,6 +94,7 @@ type InfoIntentLite = {
   machineId?: string;
   values?: {
     shipDate?: string | null;
+    receiveDate?: string | null; // ✅ 추가
     manager?: string | null;
     customer?: string | null;
     status?: "가능" | "불가능" | string | null;
@@ -69,14 +104,14 @@ type InfoIntentLite = {
 };
 
 /* -----------------------------------------------------------------------------
-  공용 카드 래퍼 (Shell): 상단 얇은 그라데이션 바 + 라운드 + 소프트 섀도우
+  공용 카드 래퍼 (Shell)
 ----------------------------------------------------------------------------- */
-const Shell: React.FC<{ children: React.ReactNode; className?: string; header?: string; right?: React.ReactNode }> = ({
-  children,
-  className,
-  header,
-  right,
-}) => (
+const Shell: React.FC<{
+  children: React.ReactNode;
+  className?: string;
+  header?: string;
+  right?: React.ReactNode;
+}> = ({ children, className, header, right }) => (
   <section className={`rounded-2xl bg-white shadow-md ring-1 ring-gray-100 ${className ?? ""}`}>
     <div className="h-2 rounded-t-2xl bg-gradient-to-r from-sky-200 via-cyan-200 to-sky-200" />
     {(header || right) && (
@@ -121,7 +156,7 @@ const OptionSelectModal: React.FC<{
       );
       if (!res.ok) throw new Error(`옵션 조회 실패: ${res.status}`);
       const data: OptionRow[] = await res.json();
-      setList(data);
+      setList(Array.isArray(data) ? data : []);
     } catch (e: any) {
       setError(e?.message ?? "네트워크 오류");
     } finally {
@@ -131,12 +166,14 @@ const OptionSelectModal: React.FC<{
 
   useEffect(() => {
     if (open) fetchList("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const t = setTimeout(() => fetchList(q), 200);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, open]);
 
   const togglePick = (row: OptionRow) =>
@@ -149,54 +186,57 @@ const OptionSelectModal: React.FC<{
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl ring-1 ring-gray-100" onClick={(e) => e.stopPropagation()}>
-        <div className="h-2 rounded-t-2xl bg-gradient-to-r from-sky-200 via-cyan-200 to-sky-200" />
-        {/* 헤더 */}
-        <div className="mb-2 flex items-center justify-between px-5 pt-3">
-          <h3 className="text-lg font-semibold text-slate-900">장비 옵션 선택</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-xl rounded-2xl bg-white shadow-xl ring-1 ring-black/5">
+        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+          <div>
+            <div className="text-base font-semibold text-gray-900">장비 옵션 선택</div>
+            <div className="mt-1 text-xs text-gray-500">검색 후 체크박스로 선택하세요.</div>
+          </div>
           <button onClick={onClose} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-200">
             닫기
           </button>
         </div>
 
-        {/* 검색 */}
-        <div className="mb-3 px-5">
+        <div className="px-5 py-4">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="옵션 검색(예: cold, T5825)"
+            placeholder="옵션 검색..."
             className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
           />
+
+          <div className="mt-4 max-h-[380px] overflow-auto rounded-xl border border-gray-100">
+            {loading ? (
+              <div className="py-12 text-center text-sm text-gray-500">불러오는 중...</div>
+            ) : error ? (
+              <div className="py-12 text-center text-sm text-red-600">{error}</div>
+            ) : list.length === 0 ? (
+              <div className="py-12 text-center text-sm text-gray-500">표시할 옵션이 없습니다.</div>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {list.map((row) => {
+                  const checked = picked.has(row.id);
+                  return (
+                    <li key={row.id} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => togglePick(row)}
+                          className="h-4 w-4 accent-sky-600"
+                        />
+                        <span className="text-sm text-slate-800">{row.name}</span>
+                      </div>
+                      {checked && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-700">선택됨</span>}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </div>
 
-        {/* 목록 */}
-        <div className="mx-5 max-h-[420px] overflow-y-auto rounded-lg border border-gray-200">
-          {loading ? (
-            <div className="py-12 text-center text-sm text-gray-500">불러오는 중…</div>
-          ) : error ? (
-            <div className="py-12 text-center text-sm text-red-600">{error}</div>
-          ) : list.length === 0 ? (
-            <div className="py-12 text-center text-sm text-gray-500">표시할 옵션이 없습니다.</div>
-          ) : (
-            <ul className="divide-y divide-gray-100">
-              {list.map((row) => {
-                const checked = picked.has(row.id);
-                return (
-                  <li key={row.id} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
-                    <div className="flex items-center gap-3">
-                      <input type="checkbox" checked={checked} onChange={() => togglePick(row)} className="h-4 w-4 accent-sky-600" />
-                      <span className="text-sm text-slate-800">{row.name}</span>
-                    </div>
-                    {checked && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-700">선택됨</span>}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-
-        {/* 푸터 */}
         <div className="mt-4 flex items-center justify-between px-5 pb-5">
           <span className="text-xs text-gray-500">선택: {picked.size}건</span>
           <div className="flex gap-2">
@@ -236,6 +276,7 @@ const EquipmentInfoPage: React.FC = () => {
   // 폼 상태
   const [machineId, setMachineId] = useState<string>(machineInit);
   const [shippingDate, setShippingDate] = useState<string>("");
+  const [receiveDate, setReceiveDate] = useState<string>(""); // ✅ 추가
   const [manager, setManager] = useState<string>("");
   const [customer, setCustomer] = useState<string>("");
   const [status, setStatus] = useState<"가능" | "불가능">("불가능");
@@ -247,8 +288,9 @@ const EquipmentInfoPage: React.FC = () => {
   const [selectedOptions, setSelectedOptions] = useState<OptionRow[]>([]);
   const [optOpen, setOptOpen] = useState(false);
 
-  // ✅ 사용자가 옵션을 수동으로 만졌는지 추적 (자동 덮어쓰기 방지)
+  // ✅ 사용자가 옵션/입고일을 수동으로 만졌는지 추적 (자동 덮어쓰기 방지)
   const optionsDirtyRef = useRef(false);
+  const receiveDirtyRef = useRef(false);
 
   // 최초 안내 1회
   const announcedRef = useRef(false);
@@ -264,11 +306,13 @@ const EquipmentInfoPage: React.FC = () => {
     if (isEmpty) {
       setMachineId("");
       setShippingDate("");
+      setReceiveDate(""); // ✅ 추가
       setManager("");
       setCustomer("");
       setStatus("불가능");
       setSerialNumber("");
       setNote("");
+
       try {
         localStorage.removeItem("selected_machine_is_empty");
         localStorage.removeItem("selected_machine_id");
@@ -291,17 +335,25 @@ const EquipmentInfoPage: React.FC = () => {
       const intent = JSON.parse(raw) as InfoIntentLite | any;
       const v = intent?.values ?? {};
 
-      const toDateInput = (d: any): string | null => {
-        if (d == null) return null;
-        const s = String(d);
+      const toDateInput = (s: any) => {
+        if (!s) return null;
+        if (typeof s !== "string") return null;
         return s.length >= 10 ? s.slice(0, 10) : s;
       };
 
       if (typeof intent?.machineId === "string") setMachineId(intent.machineId);
+
       if ("shipDate" in v) {
         const ds = toDateInput(v.shipDate);
         if (ds !== null) setShippingDate(ds);
       }
+
+      // ✅ receiveDate intent 지원(있으면)
+      if ("receiveDate" in v) {
+        const rd = toDateInput(v.receiveDate);
+        if (rd !== null) setReceiveDate(rd);
+      }
+
       if ("manager" in v && typeof v.manager === "string") setManager(v.manager ?? "");
       if ("customer" in v && typeof v.customer === "string") setCustomer(v.customer ?? "");
       if ("serialNumber" in v && typeof v.serialNumber === "string") setSerialNumber(v.serialNumber ?? "");
@@ -312,6 +364,30 @@ const EquipmentInfoPage: React.FC = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ✅ (선택) 기존 입고일 자동 조회: receiveDate가 비어있고, 사용자가 아직 안 건드렸을 때만 채움
+  useEffect(() => {
+    let aborted = false;
+
+    const run = async () => {
+      const mid = (machineId || "").trim();
+      if (!mid) return;
+      if (receiveDirtyRef.current) return;
+      if (receiveDate) return;
+
+      const rd = await tryFetchReceiptDate(mid);
+      if (aborted) return;
+      if (!rd) return;
+
+      setReceiveDate(rd);
+    };
+
+    run();
+    return () => {
+      aborted = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [machineId]);
 
   // 장비의 기존 옵션 불러오기 → 선택 반영 (자동 동기화)
   useEffect(() => {
@@ -360,19 +436,18 @@ const EquipmentInfoPage: React.FC = () => {
     const map = new Map<number, OptionRow>();
     rows.forEach((r) => map.set(r.id, r));
     setSelectedOptions(Array.from(map.values()));
-    optionsDirtyRef.current = true;   // ✅ 사용자가 수동으로 선택
+    optionsDirtyRef.current = true; // ✅ 사용자가 수동으로 선택
     setOptOpen(false);
   };
   const removeOne = (id: number) => {
     setSelectedOptions((prev) => prev.filter((r) => r.id !== id));
-    optionsDirtyRef.current = true;   // ✅ 사용자가 수동으로 제거
+    optionsDirtyRef.current = true; // ✅ 사용자가 수동으로 제거
   };
 
   // 저장
   const handleSave = async () => {
     try {
       if (!machineId.trim()) return alert("Machine ID를 입력해주세요.");
-      if (!shippingDate) return alert("출하일을 선택해주세요.");
       if (!slot.trim()) return alert("슬롯 정보가 없습니다. 대시보드에서 다시 시도해주세요.");
 
       setSaving(true);
@@ -384,7 +459,8 @@ const EquipmentInfoPage: React.FC = () => {
 
       const body = {
         machine_id: machineId.trim(),
-        shipping_date: shippingDate,
+        shipping_date: shippingDate ? shippingDate : null, // ✅ 빈칸 허용
+        receive_date: receiveDate ? receiveDate : null,   // ✅ 추가 (입고일)
         manager: manager || "",
         customer: customer || "",
         slot_code: slot,
@@ -419,11 +495,9 @@ const EquipmentInfoPage: React.FC = () => {
     }
   };
 
-  /* ── 렌더 ──────────────────────────────────────────────────────────────── */
   return (
     <div className="min-h-screen bg-gray-50 px-4 py-6">
       <div className="mx-auto w-full max-w-5xl">
-        {/* 상단 바: 위치/뒤로가기 */}
         <div className="mb-6 flex items-center justify-between">
           <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
             <span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700">{site}</span>
@@ -440,7 +514,6 @@ const EquipmentInfoPage: React.FC = () => {
           </button>
         </div>
 
-        {/* 메인 카드 */}
         <Shell
           header={pageTitle}
           right={
@@ -453,15 +526,19 @@ const EquipmentInfoPage: React.FC = () => {
           }
         >
           <div className="p-6">
-            {/* 선택된 옵션 칩 */}
             <div className="mb-6">
               <div className="mb-1 text-sm font-medium text-gray-700">선택된 옵션</div>
               {selectedOptions.length === 0 ? (
-                <div className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">아직 선택된 옵션이 없습니다.</div>
+                <div className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                  아직 선택된 옵션이 없습니다.
+                </div>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {selectedOptions.map((opt) => (
-                    <span key={opt.id} className="inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 text-xs text-sky-700 ring-1 ring-sky-200">
+                    <span
+                      key={opt.id}
+                      className="inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 text-xs text-sky-700 ring-1 ring-sky-200"
+                    >
                       {opt.name}
                       <button
                         onClick={() => removeOne(opt.id)}
@@ -476,9 +553,7 @@ const EquipmentInfoPage: React.FC = () => {
               )}
             </div>
 
-            {/* 폼: 2컬럼 섹션 */}
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-              {/* 섹션 1: 기본 정보 */}
               <div className="space-y-4">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -493,54 +568,72 @@ const EquipmentInfoPage: React.FC = () => {
                   <p className="mt-1 text-xs text-gray-400">빈 슬롯이면 비워진 상태로 시작합니다.</p>
                 </div>
 
+                {/* ✅ 출하일 + 입고일 (옆 배치) */}
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      출하일
+                    </label>
+                    <input
+                      type="date"
+                      value={shippingDate}
+                      onChange={(e) => setShippingDate(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      입고일
+                    </label>
+                    <input
+                      type="date"
+                      value={receiveDate}
+                      onChange={(e) => {
+                        receiveDirtyRef.current = true;
+                        setReceiveDate(e.target.value);
+                      }}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
+                    />
+                    <p className="mt-1 text-xs text-gray-400">입고일을 수정하면 receipt_log도 함께 갱신됩니다.</p>
+                  </div>
+                </div>
+
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    출하일 <span className="text-rose-500">*</span>
-                  </label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">담당자</label>
                   <input
-                    type="date"
-                    value={shippingDate}
-                    onChange={(e) => setShippingDate(e.target.value)}
+                    value={manager}
+                    onChange={(e) => setManager(e.target.value)}
+                    placeholder="담당자"
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Customer</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">고객사</label>
                   <input
                     value={customer}
                     onChange={(e) => setCustomer(e.target.value)}
-                    placeholder="예) ABC Corp"
+                    placeholder="고객사"
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
                   />
                 </div>
               </div>
 
-              {/* 섹션 2: 담당/시리얼/상태 */}
               <div className="space-y-4">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Manager</label>
-                  <input
-                    value={manager}
-                    onChange={(e) => setManager(e.target.value)}
-                    placeholder="예) 홍길동"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Serial Number</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">시리얼 번호</label>
                   <input
                     value={serialNumber}
                     onChange={(e) => setSerialNumber(e.target.value)}
-                    placeholder="예) SN-2025-00001"
+                    placeholder="Serial Number"
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
                   />
                 </div>
 
                 <div>
-                  <span className="mb-1 block text-sm font-medium text-gray-700">Status</span>
-                  <div className="inline-flex rounded-2xl border border-gray-200 bg-gray-50 p-1">
+                  <label className="mb-1 block text-sm font-medium text-gray-700">출하 가능 여부</label>
+                  <div className="flex items-center gap-2 rounded-xl bg-gray-50 p-2">
                     <button
                       type="button"
                       onClick={() => setStatus("가능")}
@@ -561,21 +654,19 @@ const EquipmentInfoPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
-              </div>
 
-              {/* 비고 (풀폭) */}
-              <div className="md:col-span-2">
-                <label className="mb-1 block text-sm font-medium text-gray-700">비고</label>
-                <textarea
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="특이사항 메모"
-                  className="h-28 w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
-                />
+                <div className="md:col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-gray-700">비고</label>
+                  <textarea
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    placeholder="특이사항 메모"
+                    className="h-28 w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
+                  />
+                </div>
               </div>
             </div>
 
-            {/* 액션 버튼 */}
             <div className="mt-8 flex justify-end gap-3">
               <button
                 onClick={() => navigate(-1)}
@@ -597,7 +688,6 @@ const EquipmentInfoPage: React.FC = () => {
         </Shell>
       </div>
 
-      {/* 옵션 모달 */}
       <OptionSelectModal
         open={optOpen}
         initialSelected={selectedOptions}

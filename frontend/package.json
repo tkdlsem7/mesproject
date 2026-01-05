@@ -2,7 +2,7 @@
   "name": "frontend",
   "version": "0.1.0",
   "private": true,
-  "proxy": "http://192.168.101.1:8000",
+  "proxy": "http://localhost:8000",
   "scripts": {
     "dev": "react-scripts start",
     "start": "react-scripts start",
@@ -20,6 +20,7 @@
     "@testing-library/user-event": "^13.5.0",
     "@types/jest": "^27.5.2",
     "@types/node": "^16.18.126",
+    "ajv": "^6.12.6",
     "axios": "^1.10.0",
     "chart.js": "^4.5.0",
     "class-variance-authority": "^0.7.1",

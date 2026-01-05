@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import re
-from typing import List
+from typing import List, Dict, Set, Tuple, Optional
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
@@ -28,18 +30,37 @@ from .schemas import (
 
 router = APIRouter(prefix="/progress", tags=["progress-checklist"])
 
-# 쉼표/공백/슬래시/파이프/세미콜론으로 구분
-_SPLIT_RE = re.compile(r"[,\s/|;]+")
+_SPLIT_RE = re.compile(r"\s*(?:,|/|\||;)\s*")
+_WS_RE = re.compile(r"\s+")
+
+_KST = ZoneInfo("Asia/Seoul")
+
+
+def _canon_option(opt: str) -> str:
+    opt = (opt or "").strip()
+    opt = _WS_RE.sub(" ", opt)
+    return opt.upper()
 
 
 def _split_options(raw: str) -> List[str]:
     if not raw:
         return []
-    return [t for t in (s.strip() for s in _SPLIT_RE.split(raw)) if t]
+    parts = (s.strip() for s in _SPLIT_RE.split(raw))
+    out: List[str] = []
+    seen: Set[str] = set()
+    for p in parts:
+        if not p:
+            continue
+        p2 = _canon_option(p)
+        k = p2.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(p2)
+    return out
 
 
 def _upsert_progress(machine_id: str, progress: float, db: Session) -> None:
-    """equip_progress.progress 갱신(행이 없으면 생성하지 않음)."""
     row = (
         db.query(EquipProgress)
         .filter(EquipProgress.machine_id == machine_id)
@@ -50,11 +71,6 @@ def _upsert_progress(machine_id: str, progress: float, db: Session) -> None:
 
 
 def _recompute_machine_progress(machine_id: str, db: Session) -> float:
-    """
-    machine_id 기준 전체 진행률(0~100) 재계산 후 equip_progress.progress 반영.
-    진행률 = (저장된 항목 공수합 / 전체 공수합) * 100
-    """
-    # 옵션 목록 모으기
     opt_rows = (
         db.query(EquipmentOption.option_id)
         .filter(EquipmentOption.machine_id == machine_id)
@@ -64,25 +80,26 @@ def _recompute_machine_progress(machine_id: str, db: Session) -> float:
         _upsert_progress(machine_id, 0.0, db)
         return 0.0
 
-    opts = _split_options(",".join(r[0] for r in opt_rows))
+    raw = ",".join((r[0] or "") for r in opt_rows)
+    opts = _split_options(raw)
     if not opts:
         _upsert_progress(machine_id, 0.0, db)
         return 0.0
 
-    # 저장 결과 미리 로드 (option -> checked_steps[])
     res_rows = (
         db.query(EquipmentChecklistResult.option, EquipmentChecklistResult.checked_steps)
         .filter(EquipmentChecklistResult.machine_id == machine_id)
         .all()
     )
-    saved_map = {opt: (steps or []) for opt, steps in res_rows}
+    saved_map: Dict[str, List[int]] = {
+        (opt or "").lower(): (steps or []) for opt, steps in res_rows
+    }
 
     grand_total = 0.0
     done_total = 0.0
 
     for opt in opts:
         key = opt.lower()
-
         items = (
             db.query(Checklist.no, Checklist.hours)
             .filter(func.lower(Checklist.option) == key)
@@ -94,7 +111,7 @@ def _recompute_machine_progress(machine_id: str, db: Session) -> float:
         total_hours = sum(float(h) for _, h in items)
         grand_total += total_hours
 
-        saved = set(saved_map.get(opt, []) or [])
+        saved = set(saved_map.get(key, []) or [])
         if saved:
             done_hours = sum(float(h) for no, h in items if no in saved)
             done_total += done_hours
@@ -104,10 +121,21 @@ def _recompute_machine_progress(machine_id: str, db: Session) -> float:
     return progress
 
 
-def _log_progress_update(machine_id: str, progress: float, db: Session) -> None:
+def _as_log_datetime(d: Optional[date]) -> Optional[datetime]:
+    """
+    date(YYYY-MM-DD)만 들어오면 KST 기준으로 해당 날짜 12:00로 기록.
+    (timestamptz 변환 시 날짜가 어긋나는 케이스를 줄이기 위해 정오로 설정)
+    """
+    if not d:
+        return None
+    return datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=_KST)
+
+
+def _log_progress_update(machine_id: str, progress: float, db: Session, log_date: Optional[date] = None) -> None:
     """
     저장 성공 시 equipment_progress_log에 한 줄 기록.
     manager는 equip_progress.manager 우선, 없으면 'system'.
+    ✅ log_date가 오면 updated_at을 그 날짜로 기록.
     """
     mgr = (
         db.query(EquipProgress.manager)
@@ -115,7 +143,12 @@ def _log_progress_update(machine_id: str, progress: float, db: Session) -> None:
         .scalar()
     ) or "system"
 
-    db.add(EquipmentProgressLog(machine_no=machine_id, manager=mgr, progress=progress))
+    dt = _as_log_datetime(log_date)
+
+    if dt is None:
+        db.add(EquipmentProgressLog(machine_no=machine_id, manager=mgr, progress=progress))
+    else:
+        db.add(EquipmentProgressLog(machine_no=machine_id, manager=mgr, progress=progress, updated_at=dt))
 
 
 # ------------------------- 조회 -------------------------
@@ -130,20 +163,15 @@ def get_checklist_by_machine(machine_id: str, db: Session = Depends(get_db)):
     if not rows:
         raise HTTPException(status_code=404, detail="equipment_option not found for machine")
 
-    opt_list = _split_options(",".join(r[0] for r in rows))
+    raw = ",".join((r[0] or "") for r in rows)
+    opt_list = _split_options(raw)
     if not opt_list:
         return ChecklistByMachineOut(machine_id=machine_id, options=[], pages=[])
 
     pages: List[ChecklistPageOut] = []
-    seen = set()
 
     for opt in opt_list:
         key = opt.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-
-        # 체크리스트 항목
         items = (
             db.query(Checklist)
             .filter(func.lower(Checklist.option) == key)
@@ -151,14 +179,14 @@ def get_checklist_by_machine(machine_id: str, db: Session = Depends(get_db)):
             .all()
         )
 
-        # 저장된 체크 목록
         saved = (
             db.query(EquipmentChecklistResult.checked_steps)
             .filter(
                 EquipmentChecklistResult.machine_id == machine_id,
-                EquipmentChecklistResult.option == opt,
+                func.lower(EquipmentChecklistResult.option) == key,
             )
-            .one_or_none()
+            .order_by(EquipmentChecklistResult.updated_at.desc(), EquipmentChecklistResult.no.desc())
+            .first()
         )
         checked_steps = list(saved[0]) if saved and saved[0] else []
 
@@ -195,35 +223,46 @@ def get_checklist_by_machine(machine_id: str, db: Session = Depends(get_db)):
 
 @router.post("/checklist/result", response_model=SaveChecklistOut)
 def save_checklist_result(payload: SaveChecklistIn, db: Session = Depends(get_db)):
-    steps = sorted(set(int(x) for x in payload.checked_steps))
+    machine_id = (payload.machine_id or "").strip()
+    opt = _canon_option(payload.option)
 
-    # 이 옵션의 유효 checklist.no만 허용
+    steps = sorted(set(int(x) for x in (payload.checked_steps or [])))
+
     valid_nos = {
         n for (n,) in db.query(Checklist.no)
-        .filter(func.lower(Checklist.option) == payload.option.lower())
+        .filter(func.lower(Checklist.option) == opt.lower())
         .all()
     }
     steps = [n for n in steps if n in valid_nos]
 
-    row = (
+    existing_rows = (
         db.query(EquipmentChecklistResult)
         .filter(
-            EquipmentChecklistResult.machine_id == payload.machine_id,
-            EquipmentChecklistResult.option == payload.option,
+            EquipmentChecklistResult.machine_id == machine_id,
+            func.lower(EquipmentChecklistResult.option) == opt.lower(),
         )
-        .one_or_none()
+        .order_by(EquipmentChecklistResult.updated_at.desc(), EquipmentChecklistResult.no.desc())
+        .all()
     )
-    if row:
+
+    if existing_rows:
+        row = existing_rows[0]
+        row.option = opt
         row.checked_steps = steps
+        if len(existing_rows) > 1:
+            dup_ids = [r.no for r in existing_rows[1:]]
+            db.query(EquipmentChecklistResult) \
+              .filter(EquipmentChecklistResult.no.in_(dup_ids)) \
+              .delete(synchronize_session=False)
     else:
         db.add(EquipmentChecklistResult(
-            machine_id=payload.machine_id,
-            option=payload.option,
+            machine_id=machine_id,
+            option=opt,
             checked_steps=steps,
         ))
 
-    prog = _recompute_machine_progress(payload.machine_id, db)
-    _log_progress_update(payload.machine_id, prog, db)
+    prog = _recompute_machine_progress(machine_id, db)
+    _log_progress_update(machine_id, prog, db, payload.log_date)
 
     db.commit()
     return SaveChecklistOut(ok=True)
@@ -233,39 +272,50 @@ def save_checklist_result(payload: SaveChecklistIn, db: Session = Depends(get_db
 
 @router.post("/checklist/result/batch", response_model=SaveChecklistBatchOut)
 def save_checklist_result_batch(payload: SaveChecklistBatchIn, db: Session = Depends(get_db)):
-    machine_id = payload.machine_id
+    machine_id = (payload.machine_id or "").strip()
 
-    # 옵션별 유효 no 준비
-    valid_map: dict[str, set[int]] = {}
-    for item in payload.items:
-        key = item.option.lower()
+    valid_cache: Dict[str, Set[int]] = {}
+    merged_steps: Dict[str, Set[int]] = {}
+
+    def get_valid_nos(opt_lower: str) -> Set[int]:
+        if opt_lower in valid_cache:
+            return valid_cache[opt_lower]
         nos = {
             n for (n,) in db.query(Checklist.no)
-            .filter(func.lower(Checklist.option) == key)
+            .filter(func.lower(Checklist.option) == opt_lower)
             .all()
         }
-        valid_map[item.option] = nos
+        valid_cache[opt_lower] = nos
+        return nos
 
-    # 기존 결과 전체 삭제
+    for item in (payload.items or []):
+        opt = _canon_option(item.option)
+        key = opt.lower()
+        valid = get_valid_nos(key)
+
+        cleaned = {int(x) for x in (item.checked_steps or [])}
+        cleaned = {n for n in cleaned if n in valid}
+
+        merged_steps.setdefault(opt, set()).update(cleaned)
+
     db.query(EquipmentChecklistResult) \
       .filter(EquipmentChecklistResult.machine_id == machine_id) \
       .delete(synchronize_session=False)
 
-    # 새 insert
-    new_rows: list[EquipmentChecklistResult] = []
-    for item in payload.items:
-        steps = sorted({int(x) for x in item.checked_steps if int(x) in valid_map[item.option]})
+    new_rows: List[EquipmentChecklistResult] = []
+    for opt, steps_set in merged_steps.items():
         new_rows.append(EquipmentChecklistResult(
             machine_id=machine_id,
-            option=item.option,
-            checked_steps=steps,
+            option=opt,
+            checked_steps=sorted(steps_set),
         ))
+
     if new_rows:
         db.add_all(new_rows)
 
-    db.flush()  # 진행률 계산 전에 flush
+    db.flush()
     prog = _recompute_machine_progress(machine_id, db)
-    _log_progress_update(machine_id, prog, db)
+    _log_progress_update(machine_id, prog, db, payload.log_date)
 
     db.commit()
     return SaveChecklistBatchOut(ok=True, saved=len(new_rows))

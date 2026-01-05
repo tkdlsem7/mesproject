@@ -23,6 +23,8 @@ from .board_post.routers import router as board_post_router
 from .Main_main.routers import router as main_router
 from .LogBrowser.routers import router as log_browser_router
 from .LogChart.routers import router as log_chart_router
+from .Calender.routers import router as calendar_router
+
 
 from .deps import engine
 
@@ -34,6 +36,7 @@ from .db.database import Base as DBBase
 from .Login import models as _login_models         # noqa: F401
 from .Option import models as _option_models       # noqa: F401
 from .MainDashboard import models as _dash_models  # noqa: F401
+from .Calender import models as _calendar_models
 
 log = logging.getLogger("uvicorn.error")
 
@@ -77,6 +80,7 @@ api.include_router(board_post_router)
 api.include_router(main_router)
 api.include_router(log_browser_router)
 api.include_router(log_chart_router)
+api.include_router(calendar_router)
 
 
 @app.get("/health")

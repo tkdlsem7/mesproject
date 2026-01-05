@@ -16,7 +16,10 @@ import {
 
 /** ======================= 환경/유틸 ======================= */
 
-const API_BASE = "http://192.168.101.1:8000/api";
+export const API_BASE =
+  process.env.NODE_ENV === "production"
+    ? "/api"
+    : "http://localhost:8000/api";
 const CHECKLIST_URL = `${API_BASE}/checklist`;
 
 const authHeaders = (): Record<string, string> => {
