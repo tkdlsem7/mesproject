@@ -12,6 +12,9 @@ import ProgressChecklistPage from "./Progress Checklist/ProgressChecklistPage";
 import MoveEquipmentPage from "./MachineMoving/MoveEquipmentPage";
 import TroubleShootPage from "./Troubleshoot/TroubleShootPage";
 import SetupDefectEntryPages from "./SetupDefectEntryPage/SetupDefectEntryPage";
+import AttendanceHistoryPage from "./Attendance/AttendanceHistoryPage";
+import LineAccessCurrentPage from "./LineAccess/LineAccessCurrentPage"; // ✅ 추가
+import LineAccessLogsPage from "./LineAccess/LineAccessLogsPage";
 
 import BoardPage from "./Board/Boardpage";
 import BoardNewPage from "./Board/BoardNewPage";
@@ -84,6 +87,7 @@ export default function App() {
       <Route path="/logs/table" element={<LogTableBrowser />} />
       <Route path="/log/charts" element={<LogChartPage />} />
       <Route path="/gantt" element={<EquipmentGanttPage />} />
+      <Route path="/line-access/logs" element={<LineAccessLogsPage />} />
 
       <Route
         path="/board/new"
@@ -116,6 +120,24 @@ export default function App() {
         element={
           <RequireAuth>
             <CalendarExcelUploadPage />
+          </RequireAuth>
+        }
+      />
+
+      <Route
+        path="/attendance"
+        element={
+          <RequireAuth>
+            <AttendanceHistoryPage />
+          </RequireAuth>
+        }
+      />
+
+      <Route
+        path="/line-access"
+        element={
+          <RequireAuth>
+            <LineAccessCurrentPage />
           </RequireAuth>
         }
       />

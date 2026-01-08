@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pydantic import BaseModel
 from typing import Optional, List  # ← 추가
+from datetime import datetime
 
 
 class BuildingCapacity(BaseModel):
@@ -74,3 +75,17 @@ class EquipGroupSummary(BaseModel):
 class EquipSummaryResponse(BaseModel):
     buildings: List[EquipGroupSummary]  # A동 / B동 / I라인
     sites: List[EquipGroupSummary]      # 본사 / 진우리
+
+class AttendanceCreate(BaseModel):
+    user_id: str
+    record_type: int  # 1,2,3
+
+
+class AttendanceLogOut(BaseModel):
+    no: int
+    user_id: str
+    record_type: int
+    checked_at: datetime
+
+    class Config:
+        from_attributes = True

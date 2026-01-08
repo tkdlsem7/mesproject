@@ -5,7 +5,9 @@ from collections import Counter
 from collections import Counter  # 🔹 추가
 from collections import Counter
 from typing import Optional, List
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
+from zoneinfo import ZoneInfo
+from fastapi import Body
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_
@@ -13,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from backend.db.database import get_db
 from . import schemas
-from .models import EquipProgress, EquipmentLog, EquipmentReceiptLog
+from .models import EquipProgress, EquipmentLog, EquipmentReceiptLog, AttendanceLog
 
 router = APIRouter(prefix="/main", tags=["main"])
 
@@ -444,3 +446,32 @@ def equip_summary(db: Session = Depends(get_db)):
             {"name": "진우리", **_aggregate_equip_rows(rows_jin)},
         ],
     }
+
+
+@router.post("/attendance", response_model=schemas.AttendanceLogOut)
+def create_attendance_log(
+    payload: schemas.AttendanceCreate = Body(...),
+    db: Session = Depends(get_db),
+):
+    # ✅ 한국시간 기준 "오늘 00:00 ~ 내일 00:00" 범위 계산
+    kst = ZoneInfo("Asia/Seoul")
+    now_kst = datetime.now(kst)
+    start_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_kst = start_kst + timedelta(days=1)
+
+    # ✅ 같은 user의 오늘 기록은 전부 삭제 (출근/오전/오후 포함)
+    db.query(AttendanceLog).filter(
+        AttendanceLog.user_id == payload.user_id,
+        AttendanceLog.checked_at >= start_kst,
+        AttendanceLog.checked_at < end_kst,
+    ).delete(synchronize_session=False)
+
+    # ✅ 새 기록 1건 추가
+    row = AttendanceLog(
+        user_id=payload.user_id,
+        record_type=int(payload.record_type),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
