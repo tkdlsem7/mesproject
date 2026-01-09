@@ -135,13 +135,7 @@ function LoginForm() {
 
         {/* 회원가입 링크: 상단 여백 키움 */}
         <div className="mt-6 text-center text-sm text-gray-600">
-          아직 계정이 없나요?{' '}
-          <Link
-            to="/register"
-            className="font-semibold text-blue-600 underline-offset-2 hover:underline"
-          >
-            회원가입
-          </Link>
+
         </div>
       </form>
     </div>

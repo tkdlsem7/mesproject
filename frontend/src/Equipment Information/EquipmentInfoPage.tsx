@@ -306,7 +306,7 @@ const EquipmentInfoPage: React.FC = () => {
     if (isEmpty) {
       setMachineId("");
       setShippingDate("");
-      setReceiveDate(""); // ✅ 추가
+      setReceiveDate("");
       setManager("");
       setCustomer("");
       setStatus("불가능");
@@ -348,7 +348,6 @@ const EquipmentInfoPage: React.FC = () => {
         if (ds !== null) setShippingDate(ds);
       }
 
-      // ✅ receiveDate intent 지원(있으면)
       if ("receiveDate" in v) {
         const rd = toDateInput(v.receiveDate);
         if (rd !== null) setReceiveDate(rd);
@@ -395,9 +394,8 @@ const EquipmentInfoPage: React.FC = () => {
     const load = async () => {
       const mid = (machineId || "").trim();
 
-      // mid가 비었을 때: 사용자가 아직 입력 중이면 기존 선택 유지.
       if (!mid) {
-        if (!optionsDirtyRef.current) setSelectedOptions([]); // 사용자가 건드린 적 없으면만 초기화
+        if (!optionsDirtyRef.current) setSelectedOptions([]);
         return;
       }
 
@@ -405,10 +403,7 @@ const EquipmentInfoPage: React.FC = () => {
         const codes = await fetchEquipmentOptionCodes(mid);
         if (aborted) return;
 
-        // 사용자가 수동으로 만졌다면 절대 자동으로 덮어쓰지 않음
         if (optionsDirtyRef.current) return;
-
-        // 서버에 아무 옵션도 없으면 기존 선택 유지 (지우지 않음)
         if (codes.length === 0) return;
 
         const all = await fetchAllTaskOptions();
@@ -418,9 +413,9 @@ const EquipmentInfoPage: React.FC = () => {
         const picked = all.filter((o) => pickSet.has((o.name || "").toLowerCase()));
 
         setSelectedOptions(picked);
-        optionsDirtyRef.current = false; // 서버 값으로 동기화 완료
+        optionsDirtyRef.current = false;
       } catch {
-        // 네트워크 오류 시에도 기존 선택 유지
+        // ignore
       }
     };
     load();
@@ -436,12 +431,12 @@ const EquipmentInfoPage: React.FC = () => {
     const map = new Map<number, OptionRow>();
     rows.forEach((r) => map.set(r.id, r));
     setSelectedOptions(Array.from(map.values()));
-    optionsDirtyRef.current = true; // ✅ 사용자가 수동으로 선택
+    optionsDirtyRef.current = true;
     setOptOpen(false);
   };
   const removeOne = (id: number) => {
     setSelectedOptions((prev) => prev.filter((r) => r.id !== id));
-    optionsDirtyRef.current = true; // ✅ 사용자가 수동으로 제거
+    optionsDirtyRef.current = true;
   };
 
   // 저장
@@ -459,8 +454,8 @@ const EquipmentInfoPage: React.FC = () => {
 
       const body = {
         machine_id: machineId.trim(),
-        shipping_date: shippingDate ? shippingDate : null, // ✅ 빈칸 허용
-        receive_date: receiveDate ? receiveDate : null,   // ✅ 추가 (입고일)
+        shipping_date: shippingDate ? shippingDate : null,
+        receive_date: receiveDate ? receiveDate : null,
         manager: manager || "",
         customer: customer || "",
         slot_code: slot,
@@ -479,7 +474,25 @@ const EquipmentInfoPage: React.FC = () => {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(`저장 실패: ${res.status}`);
+
+      if (!res.ok) {
+        // ✅ 409(중복) 메시지까지 예쁘게 처리
+        let detail = `저장 실패: ${res.status}`;
+        try {
+          const data = await res.json();
+          if (data?.detail) detail = String(data.detail);
+        } catch {
+          try {
+            const txt = await res.text();
+            if (txt) detail = txt;
+          } catch {}
+        }
+
+        if (res.status === 409) {
+          throw new Error(`중복된 장비 호기입니다.\n${detail}\n\n기존 위치를 확인하거나 다른 호기를 입력해주세요.`);
+        }
+        throw new Error(detail);
+      }
 
       try {
         localStorage.setItem("dashboard_should_refresh", "1");
@@ -565,10 +578,9 @@ const EquipmentInfoPage: React.FC = () => {
                     placeholder="예) j-07-02"
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
                   />
-                  <p className="mt-1 text-xs text-gray-400">빈 슬롯이면 비워진 상태로 시작합니다.</p>
+                  <p className="mt-1 text-xs text-gray-400">중복된 호기는 저장 시 차단됩니다.</p>
                 </div>
 
-                {/* ✅ 출하일 + 입고일 (옆 배치) */}
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div>
                     <label className="mb-1 block text-sm font-medium text-gray-700">

@@ -121,6 +121,14 @@ def _effective_receive_date(payload: EquipmentSaveRequest) -> _date:
     return payload.receive_date or _date.today()
 
 
+def _find_slot_row(db: Session, *, site: str, slot_code: str):
+    q = db.query(EquipProgress).filter(EquipProgress.slot_code == slot_code)
+    # site가 있을 때만 site까지 같이 필터 (site가 비어있으면 slot만으로 찾음)
+    if site.strip():
+        q = q.filter(EquipProgress.site == site)
+    return q.first()
+
+
 @router.get("/options/{machine_id}", response_model=EquipmentOptionOut)
 def get_equipment_options(machine_id: str = Path(..., min_length=1), db: Session = Depends(get_db)):
     row = (
@@ -136,7 +144,6 @@ def get_equipment_options(machine_id: str = Path(..., min_length=1), db: Session
     return EquipmentOptionOut(machine_id=machine_id, option_codes=codes, option_codes_str=raw)
 
 
-# ✅ 프론트 프리필용: 가장 최근 입고일 조회
 @router.get("/receipt-date/{machine_id}", response_model=EquipmentReceiptDateOut)
 def get_latest_receipt_date(machine_id: str = Path(..., min_length=1), db: Session = Depends(get_db)):
     row = (
@@ -156,65 +163,43 @@ def save_equipment_info(payload: EquipmentSaveRequest, db: Session = Depends(get
     site = payload.site.strip() if payload.site else ""
     status_norm = _normalize_status(payload.status)
 
-    # ── 1) machine_id 기준 UPDATE
-    row_by_machine = db.query(EquipProgress).filter(EquipProgress.machine_id == machine_id).first()
-    if row_by_machine:
-        row_by_machine.manager = payload.manager or ""
-        row_by_machine.shipping_date = payload.shipping_date
-        row_by_machine.customer = payload.customer or ""
-        row_by_machine.slot_code = slot_code
-        row_by_machine.site = site
-        row_by_machine.serial_number = payload.serial_number
-        row_by_machine.status = status_norm
-        row_by_machine.note = payload.note
+    # ─────────────────────────────────────────────────────────────
+    # ✅ 중복 제어(핵심)
+    # - target slot row(현재 편집 대상)와 machine_id row를 각각 찾는다.
+    # - machine_id가 이미 다른 row에 존재하면 409로 막는다.
+    # ─────────────────────────────────────────────────────────────
+    target_row = _find_slot_row(db, site=site, slot_code=slot_code)
 
-        try:
-            db.flush()
-
-            _upsert_equipment_option(
-                db,
-                machine_id=machine_id,
-                manager=payload.manager or "",
-                option_codes_str=payload.option_codes_str,
-            )
-
-            # ✅ 입고일 수정
-            if payload.receive_date is not None:
-                _upsert_receipt_date(
-                    db,
-                    machine_no=machine_id,
-                    receive_date=payload.receive_date,
-                    manager=payload.manager or "",
-                    site=site or "",
-                    slot=slot_code,
-                )
-
-            db.commit()
-            db.refresh(row_by_machine)
-        except Exception as e:
-            db.rollback()
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"저장 실패: {e}")
-
-        return EquipmentSaveResponse(mode="update", row_no=row_by_machine.no, saved_option_count=0)
-
-    # ── 2) (site, slot_code) 기준 UPDATE
-    row_by_slot = (
+    existing_machine_row = (
         db.query(EquipProgress)
-        .filter(and_(EquipProgress.site == site, EquipProgress.slot_code == slot_code))
+        .filter(EquipProgress.machine_id == machine_id)
         .first()
     )
-    if row_by_slot:
-        was_empty = _is_blank(row_by_slot.machine_id)
 
-        row_by_slot.machine_id = machine_id
-        row_by_slot.manager = payload.manager or ""
-        row_by_slot.shipping_date = payload.shipping_date
-        row_by_slot.customer = payload.customer or ""
-        row_by_slot.slot_code = slot_code
-        row_by_slot.site = site
-        row_by_slot.serial_number = payload.serial_number
-        row_by_slot.status = status_norm
-        row_by_slot.note = payload.note
+    if existing_machine_row:
+        # 같은 row(동일 슬롯에서 수정)면 허용
+        if not target_row or existing_machine_row.no != target_row.no:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"이미 등록된 장비 호기입니다: {machine_id} "
+                    f"(현재 위치: {existing_machine_row.site or '-'} / {existing_machine_row.slot_code or '-'})"
+                ),
+            )
+
+    # ── 1) (site, slot_code) 기준 UPDATE (권장: 슬롯 기준으로만 업데이트)
+    if target_row:
+        was_empty = _is_blank(target_row.machine_id)
+
+        target_row.machine_id = machine_id
+        target_row.manager = payload.manager or ""
+        target_row.shipping_date = payload.shipping_date
+        target_row.customer = payload.customer or ""
+        target_row.slot_code = slot_code
+        target_row.site = site
+        target_row.serial_number = payload.serial_number
+        target_row.status = status_norm
+        target_row.note = payload.note
 
         try:
             db.flush()
@@ -249,14 +234,14 @@ def save_equipment_info(payload: EquipmentSaveRequest, db: Session = Depends(get
                 )
 
             db.commit()
-            db.refresh(row_by_slot)
+            db.refresh(target_row)
         except Exception as e:
             db.rollback()
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"저장 실패: {e}")
 
-        return EquipmentSaveResponse(mode="update", row_no=row_by_slot.no, saved_option_count=0)
+        return EquipmentSaveResponse(mode="update", row_no=target_row.no, saved_option_count=0)
 
-    # ── 3) INSERT
+    # ── 2) INSERT (slot row가 없고, machine_id도 중복이 아니면 신규 생성)
     new_row = EquipProgress(
         machine_id=machine_id,
         progress=Decimal("0.00"),

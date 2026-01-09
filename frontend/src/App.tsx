@@ -13,7 +13,7 @@ import MoveEquipmentPage from "./MachineMoving/MoveEquipmentPage";
 import TroubleShootPage from "./Troubleshoot/TroubleShootPage";
 import SetupDefectEntryPages from "./SetupDefectEntryPage/SetupDefectEntryPage";
 import AttendanceHistoryPage from "./Attendance/AttendanceHistoryPage";
-import LineAccessCurrentPage from "./LineAccess/LineAccessCurrentPage"; // ✅ 추가
+import LineAccessCurrentPage from "./LineAccess/LineAccessCurrentPage";
 import LineAccessLogsPage from "./LineAccess/LineAccessLogsPage";
 
 import BoardPage from "./Board/Boardpage";
@@ -25,17 +25,35 @@ import LogTableBrowser from "./logtable/LogTableBrowser";
 import LogChartPage from "./LogChart/LogChartPage";
 import EquipmentGanttPage from "./Calender/EquipmentGanttPage";
 
-// ✅ 추가: 캘린더 라우트용 페이지 import
 import EquipmentCalendarPage from "./Calender/EquipmentCalendarPage";
 import CalendarExcelUploadPage from "./Calender/ScheduleExcelUploadPage";
 
+// ✅ 회원정보 수정 페이지 (이미 만들어둔 파일 경로에 맞춰 수정)
+import UserEditPage from "./Login/UserEditPage";
+
 // ✅ 토큰만 확인하는 최소 가드
 const RequireAuth: React.FC<{ children: React.ReactElement }> = ({ children }) => {
-  const token = localStorage.getItem("access_token");
+  const token =
+    localStorage.getItem("access_token") || sessionStorage.getItem("access_token");
   const location = useLocation();
+
   if (!token) {
-    return <Navigate to={`/?redirect=${encodeURIComponent(location.pathname)}`} replace />;
+    // ✅ 핵심 수정:
+    // /account/edit로 가려다 로그인 페이지로 튕겼을 때,
+    // redirect=/account/edit 를 붙이면 로그인 직후 다시 /account/edit로 가버림.
+    // 그래서 이 경우에는 redirect 파라미터를 붙이지 않음 → 로그인 후 기본(/main)으로 감.
+    if (location.pathname === "/account/edit") {
+      return <Navigate to="/" replace />;
+    }
+
+    return (
+      <Navigate
+        to={`/?redirect=${encodeURIComponent(location.pathname)}`}
+        replace
+      />
+    );
   }
+
   return children;
 };
 
@@ -47,8 +65,21 @@ const getUserName = () => {
 export default function App() {
   return (
     <Routes>
+      {/* 로그인 */}
       <Route path="/" element={<LoginForm />} />
+
+      {/* 메인 (원하면 RequireAuth로 감싸도 됨) */}
       <Route path="/main" element={<MainPage userName={getUserName()} />} />
+
+      {/* ✅ 회원정보 수정: 로그인 후 메인에서 버튼 눌러서만 들어가게 유지 */}
+      <Route
+        path="/account/edit"
+        element={
+          <RequireAuth>
+            <UserEditPage />
+          </RequireAuth>
+        }
+      />
 
       <Route
         path="/dashboard"
@@ -67,6 +98,7 @@ export default function App() {
           </RequireAuth>
         }
       />
+
       <Route
         path="/options/modify/:id"
         element={
@@ -97,6 +129,7 @@ export default function App() {
           </RequireAuth>
         }
       />
+
       <Route
         path="/board/:no/edit"
         element={
@@ -106,7 +139,6 @@ export default function App() {
         }
       />
 
-      {/* ✅ 추가: 캘린더 + 업로드 라우트 */}
       <Route
         path="/calendar"
         element={
@@ -115,6 +147,7 @@ export default function App() {
           </RequireAuth>
         }
       />
+
       <Route
         path="/calendar/upload"
         element={

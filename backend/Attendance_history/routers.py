@@ -62,23 +62,17 @@ SortType = Literal["time_desc", "time_asc", "name_asc", "id_asc"]
 
 @router.get("/logs", response_model=schemas.AttendanceLogsResponse)
 def list_attendance_logs(
-    # ✅ 기존: day(단일 날짜)
     day: Optional[date] = Query(None, description="조회 날짜 (YYYY-MM-DD). 미지정 시 오늘"),
-    # ✅ 추가: 기간 조회
     from_date: Optional[date] = Query(None, description="조회 시작일 (YYYY-MM-DD)"),
     to_date: Optional[date] = Query(None, description="조회 종료일 (YYYY-MM-DD)"),
-    # ✅ 추가: 팀 필터(조직도 선택용)
     dept: Optional[str] = Query(None, description="팀(부서) 필터. ILIKE 포함 검색"),
-    # ✅ 기존: 통합 검색(q)
     q: Optional[str] = Query(None, description="팀/이름/ID + 기록(출근/오전/오후/1/2/3) 통합 검색"),
-    # ✅ 추가: 정렬
     sort: SortType = Query("time_desc", description="정렬: time_desc/time_asc/name_asc/id_asc"),
     limit: int = Query(500, ge=1, le=2000),
     db: Session = Depends(get_db),
 ):
     kst = ZoneInfo("Asia/Seoul")
 
-    # 1) 기간 확정
     if from_date or to_date:
         if from_date is None:
             from_date = to_date
@@ -87,7 +81,6 @@ def list_attendance_logs(
         assert from_date is not None and to_date is not None
         start_day = from_date
         end_day = to_date
-        # day는 "대표값"으로만 내려줌(기존 호환)
         day_value: Optional[date] = from_date
     else:
         if day is None:
@@ -99,11 +92,9 @@ def list_attendance_logs(
     start_kst = datetime.combine(start_day, time.min, tzinfo=kst)
     end_kst = datetime.combine(end_day, time.min, tzinfo=kst) + timedelta(days=1)
 
-    # 2) q 파싱(기록타입/키워드)
     record_type_filter, keyword = _parse_q(q)
     kw_like = f"%{keyword}%" if keyword else None
 
-    # 3) 팀 필터
     dept_like = f"%{dept}%" if dept else None
 
     stmt = text("""
@@ -153,14 +144,12 @@ def list_attendance_logs(
 
     items = [schemas.AttendanceLogRow(**dict(r)) for r in rows]
 
-    # 4) 정렬(프론트 드롭다운)
     if sort == "time_asc":
         items.sort(key=lambda x: x.checked_at)
     elif sort == "name_asc":
         items.sort(key=lambda x: (x.user_name or "", x.user_id))
     elif sort == "id_asc":
         items.sort(key=lambda x: x.user_id)
-    # time_desc는 이미 SQL에서 최신순
 
     return {
         "day": day_value,
@@ -168,6 +157,7 @@ def list_attendance_logs(
         "to_date": end_day,
         "items": items,
     }
+
 
 @router.get("/summary/dept", response_model=schemas.DeptAttendanceSummaryResponse)
 def dept_attendance_summary(
@@ -178,10 +168,25 @@ def dept_attendance_summary(
     start_kst = datetime.combine(day, time.min, tzinfo=kst)
     end_kst = start_kst + timedelta(days=1)
 
-    # ✅ 화면에 쓰는 4개 팀만 집계
-    depts = ["시스템생산실", "통합생산실", "생산물류팀", "파트생산팀"]
+    # ✅ 요청하신 7개 팀으로 집계
+    depts = [
+        "시스템생산1팀",
+        "시스템생산2팀",
+        "시스템생산3팀",
+        "생산품질혁신팀",
+        "생산솔루션팀",
+        "생산물류팀",
+        "파트생산팀",
+    ]
 
-    stmt = text("""
+    params = {"start_kst": start_kst, "end_kst": end_kst}
+    ph = []
+    for i, d in enumerate(depts):
+        k = f"d{i}"
+        ph.append(f":{k}")
+        params[k] = d
+
+    stmt = text(f"""
         SELECT
             u.dept AS dept,
             COUNT(DISTINCT al.user_id) AS present
@@ -190,22 +195,31 @@ def dept_attendance_summary(
         WHERE al.checked_at >= :start_kst
           AND al.checked_at <  :end_kst
           AND al.record_type IN (1,2,3)
-          AND u.dept IN ('시스템생산실','통합생산실','생산물류팀','파트생산팀')
+          AND u.dept IN ({",".join(ph)})
         GROUP BY u.dept
     """)
 
-    rows = db.execute(stmt, {"start_kst": start_kst, "end_kst": end_kst}).mappings().all()
+    rows = db.execute(stmt, params).mappings().all()
     present_map = {r["dept"]: int(r["present"] or 0) for r in rows}
 
     items = [{"dept": d, "present": present_map.get(d, 0)} for d in depts]
     return {"day": day, "items": items}
 
+
 @router.get("/roster", response_model=schemas.AttendanceRosterResponse)
 def get_roster(
     db: Session = Depends(get_db),
 ):
-    # 생산본부 4팀만 고정
-    depts = ["시스템생산실", "통합생산실", "생산물류팀", "파트생산팀"]
+    # ✅ 요청하신 7개 팀으로 로스터 제한
+    depts = [
+        "시스템생산1팀",
+        "시스템생산2팀",
+        "시스템생산3팀",
+        "생산품질혁신팀",
+        "생산솔루션팀",
+        "생산물류팀",
+        "파트생산팀",
+    ]
 
     params = {}
     ph = []
