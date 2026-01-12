@@ -1,13 +1,16 @@
 // src/Board/BoardEditPage.tsx
-import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import axios from 'axios';
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import axios from "axios";
+
+// ✅ 전역 auth 컨텍스트
+import { useAuth } from "../lib/AuthContext";
 
 export const API_BASE =
   process.env.NODE_ENV === "production" ? "/api" : "http://localhost:8000/api";
 
-type Category = '공지사항' | '적용사항';
-const CATEGORIES: Category[] = ['공지사항', '적용사항'];
+type Category = "공지사항" | "적용사항";
+const CATEGORIES: Category[] = ["공지사항", "적용사항"];
 
 type BoardPost = {
   no: number;
@@ -16,26 +19,60 @@ type BoardPost = {
   category: string;
 };
 
+const LS_AUTH = "user_auth";
+const LS_NAME = "user_name";
+
 const BoardEditPage: React.FC = () => {
   const { no } = useParams<{ no: string }>();
   const navigate = useNavigate();
+  const { manager, auth: ctxAuth } = useAuth();
 
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [category, setCategory] = useState<Category>('공지사항');
+  // ✅ auth 값: 컨텍스트 우선, 없으면 localStorage fallback
+  const authValue = useMemo(() => {
+    if (typeof ctxAuth === "number") return ctxAuth;
+    const s = localStorage.getItem(LS_AUTH);
+    const n = s ? Number(s) : 0;
+    return Number.isFinite(n) ? n : 0;
+  }, [ctxAuth]);
+
+  // ✅ 작성자 표시(옵션)
+  const authorName = useMemo(() => {
+    const fromCtx = (manager ?? "").trim();
+    if (fromCtx) return fromCtx;
+    return (localStorage.getItem(LS_NAME) || "미등록").trim();
+  }, [manager]);
+
+  const canEdit = authValue >= 1;
+
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [category, setCategory] = useState<Category>("공지사항");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const baseInput =
-    'w-full rounded-xl border border-slate-300 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200';
+    "w-full rounded-xl border border-slate-300 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200";
 
-  // 작성자 표시(옵션)
-  const authorName = useMemo(() => localStorage.getItem('user_name') || '미등록', []);
-
-  // 초기 데이터 로드
+  // ✅ 권한 가드 (auth < 1이면 수정 페이지 진입 불가)
+  // - StrictMode에서 effect 2번 실행되는 경우가 있어서 ref로 1회만 alert 처리
+  const blockedOnceRef = useRef(false);
   useEffect(() => {
+    if (canEdit) return;
+
+    if (blockedOnceRef.current) return;
+    blockedOnceRef.current = true;
+
+    alert("권한이 없습니다. (게시글 수정은 auth 1 이상만 가능)");
+    navigate("/board", { replace: true });
+  }, [canEdit, navigate]);
+
+  // 초기 데이터 로드 (권한 있을 때만)
+  useEffect(() => {
+    if (!canEdit) return;
+    if (!no) return;
+
     let alive = true;
     (async () => {
       try {
@@ -43,61 +80,73 @@ const BoardEditPage: React.FC = () => {
         setErr(null);
         const res = await axios.get<BoardPost>(`${API_BASE}/board/${no}`);
         if (!alive) return;
-        setTitle(res.data.title || '');
-        setContent(res.data.content || '');
+
+        setTitle(res.data.title || "");
+        setContent(res.data.content || "");
         const cat = res.data.category as Category;
-        setCategory(cat === '적용사항' ? '적용사항' : '공지사항');
+        setCategory(cat === "적용사항" ? "적용사항" : "공지사항");
       } catch (e: any) {
         console.error(e);
-        if (alive) setErr('글을 불러오지 못했습니다.');
+        if (alive) setErr("글을 불러오지 못했습니다.");
       } finally {
         if (alive) setLoading(false);
       }
     })();
+
     return () => {
       alive = false;
     };
-  }, [no]);
+  }, [no, canEdit]);
 
   // Ctrl/⌘ + S 저장
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
         e.preventDefault();
-        (document.getElementById('board-edit-save-btn') as HTMLButtonElement | null)?.click();
+        (document.getElementById("board-edit-save-btn") as HTMLButtonElement | null)?.click();
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr(null);
-    if (!title.trim()) return setErr('제목을 입력해 주세요.');
-    if (!content.trim()) return setErr('내용을 입력해 주세요.');
+
+    // ✅ 저장 시점에서도 한 번 더 방어
+    if (!canEdit) {
+      alert("권한이 없습니다. (게시글 수정은 auth 1 이상만 가능)");
+      return;
+    }
+
+    if (!title.trim()) return setErr("제목을 입력해 주세요.");
+    if (!content.trim()) return setErr("내용을 입력해 주세요.");
 
     try {
       setSaving(true);
-      const token = localStorage.getItem('access_token');
+      const token = localStorage.getItem("access_token");
       await axios.put(
         `${API_BASE}/board/${no}`,
         { title: title.trim(), content: content.trim(), category },
         {
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
         }
       );
-      navigate('/board', { replace: true });
+      navigate("/board", { replace: true });
     } catch (e: any) {
       console.error(e);
-      setErr('수정에 실패했습니다.');
+      setErr("수정에 실패했습니다.");
     } finally {
       setSaving(false);
     }
   };
+
+  // 권한 없으면 화면 깜빡임 방지용(리다이렉트 전에 짧게 렌더될 수 있음)
+  if (!canEdit) return null;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -147,8 +196,8 @@ const BoardEditPage: React.FC = () => {
                       onClick={() => setCategory(c)}
                       className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
                         active
-                          ? 'bg-sky-600 text-white shadow'
-                          : 'bg-white text-slate-700 hover:bg-slate-100'
+                          ? "bg-sky-600 text-white shadow"
+                          : "bg-white text-slate-700 hover:bg-slate-100"
                       }`}
                     >
                       {c}
@@ -197,7 +246,7 @@ const BoardEditPage: React.FC = () => {
             <div className="flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => navigate('/board')}
+                onClick={() => navigate("/board")}
                 className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
                 취소
@@ -207,10 +256,10 @@ const BoardEditPage: React.FC = () => {
                 type="submit"
                 disabled={saving}
                 className={`rounded-xl px-5 py-2 text-sm font-semibold text-white shadow ${
-                  saving ? 'cursor-not-allowed bg-slate-400' : 'bg-sky-600 hover:bg-sky-700'
+                  saving ? "cursor-not-allowed bg-slate-400" : "bg-sky-600 hover:bg-sky-700"
                 }`}
               >
-                {saving ? '저장 중…' : '저장'}
+                {saving ? "저장 중…" : "저장"}
               </button>
             </div>
           </form>

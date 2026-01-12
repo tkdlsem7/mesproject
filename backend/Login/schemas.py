@@ -17,3 +17,7 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     name: str       # 프론트가 다른 폼에서 쓰도록 같이 반환
+    auth : int
+
+    
+

@@ -1,48 +1,89 @@
 // src/Board/BoardNewPage.tsx
-import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import axios from "axios";
+
+// ✅ 전역 auth 컨텍스트
+import { useAuth } from "../lib/AuthContext";
 
 // CRA/Vite 공용: 환경변수 → 없으면 '/api'
 export const API_BASE =
   process.env.NODE_ENV === "production" ? "/api" : "http://localhost:8000/api";
 
-type Category = '공지사항' | '적용사항';
-const CATEGORIES: Category[] = ['공지사항', '적용사항'];
+type Category = "공지사항" | "적용사항";
+const CATEGORIES: Category[] = ["공지사항", "적용사항"];
+
+const LS_AUTH = "user_auth";
+const LS_NAME = "user_name";
 
 const BoardNewPage: React.FC = () => {
   const navigate = useNavigate();
+  const { manager, auth: ctxAuth } = useAuth();
 
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [category, setCategory] = useState<Category>('공지사항');
+  // ✅ auth 값: 컨텍스트 우선, 없으면 localStorage fallback
+  const authValue = useMemo(() => {
+    if (typeof ctxAuth === "number") return ctxAuth;
+    const s = localStorage.getItem(LS_AUTH);
+    const n = s ? Number(s) : 0;
+    return Number.isFinite(n) ? n : 0;
+  }, [ctxAuth]);
+
+  // ✅ 작성자명: 컨텍스트(manager) 우선, 없으면 localStorage fallback
+  const authorName = useMemo(() => {
+    const fromCtx = (manager ?? "").trim();
+    if (fromCtx) return fromCtx;
+    return (localStorage.getItem(LS_NAME) || "미등록").trim();
+  }, [manager]);
+
+  // ✅ 한글 안전하게 변환
+  const authorHeader = useMemo(() => encodeURIComponent(authorName), [authorName]);
+
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [category, setCategory] = useState<Category>("공지사항");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const authorName = (localStorage.getItem('user_name') || '미등록').trim();
-// ✅ 한글 안전하게 변환
-  const authorHeader = encodeURIComponent(authorName);
+
+  // ✅ 권한 가드 (auth < 1이면 등록 페이지 진입 불가)
+  // - StrictMode에서 effect 2번 실행되는 경우가 있어서 ref로 1회만 alert 처리
+  const blockedOnceRef = useRef(false);
+  useEffect(() => {
+    if (authValue >= 1) return;
+
+    if (blockedOnceRef.current) return;
+    blockedOnceRef.current = true;
+
+    alert("권한이 없습니다. (게시글 등록은 auth 1 이상만 가능)");
+    navigate("/board", { replace: true });
+  }, [authValue, navigate]);
 
   // Ctrl/⌘ + Enter 로 제출
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        (document.getElementById('board-submit-btn') as HTMLButtonElement | null)?.click();
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        (document.getElementById("board-submit-btn") as HTMLButtonElement | null)?.click();
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!title.trim()) return setError('제목을 입력해 주세요.');
-    if (!content.trim()) return setError('내용을 입력해 주세요.');
+    // ✅ 저장 시점에서도 한 번 더 방어
+    if (authValue < 1) {
+      alert("권한이 없습니다. (게시글 등록은 auth 1 이상만 가능)");
+      return;
+    }
+
+    if (!title.trim()) return setError("제목을 입력해 주세요.");
+    if (!content.trim()) return setError("내용을 입력해 주세요.");
 
     try {
       setSubmitting(true);
-      const token = localStorage.getItem('access_token');
+      const token = localStorage.getItem("access_token");
 
       await axios.post(
         `${API_BASE}/board`,
@@ -53,22 +94,22 @@ const BoardNewPage: React.FC = () => {
         },
         {
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            'X-User-Name': authorHeader,
+            "X-User-Name": authorHeader,
           },
         }
       );
 
-      navigate('/board', { replace: true });
+      navigate("/board", { replace: true });
     } catch (err: any) {
       console.error(err);
       if (err?.response?.status === 401) {
-        setError('로그인이 필요합니다. 다시 로그인해 주세요.');
+        setError("로그인이 필요합니다. 다시 로그인해 주세요.");
       } else if (err?.response?.data?.detail) {
         setError(String(err.response.data.detail));
       } else {
-        setError('등록 중 오류가 발생했습니다.');
+        setError("등록 중 오류가 발생했습니다.");
       }
     } finally {
       setSubmitting(false);
@@ -77,7 +118,7 @@ const BoardNewPage: React.FC = () => {
 
   // 공통 인풋 스타일
   const baseInput =
-    'w-full rounded-xl border border-slate-300 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200';
+    "w-full rounded-xl border border-slate-300 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200";
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -120,8 +161,8 @@ const BoardNewPage: React.FC = () => {
                     onClick={() => setCategory(c)}
                     className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
                       active
-                        ? 'bg-sky-600 text-white shadow'
-                        : 'bg-white text-slate-700 hover:bg-slate-100'
+                        ? "bg-sky-600 text-white shadow"
+                        : "bg-white text-slate-700 hover:bg-slate-100"
                     }`}
                   >
                     {c}
@@ -170,7 +211,7 @@ const BoardNewPage: React.FC = () => {
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={() => navigate('/board')}
+              onClick={() => navigate("/board")}
               className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
               취소
@@ -180,12 +221,10 @@ const BoardNewPage: React.FC = () => {
               type="submit"
               disabled={submitting}
               className={`rounded-xl px-5 py-2 text-sm font-semibold text-white shadow ${
-                submitting
-                  ? 'cursor-not-allowed bg-slate-400'
-                  : 'bg-sky-600 hover:bg-sky-700'
+                submitting ? "cursor-not-allowed bg-slate-400" : "bg-sky-600 hover:bg-sky-700"
               }`}
             >
-              {submitting ? '등록 중…' : '등록'}
+              {submitting ? "등록 중…" : "등록"}
             </button>
           </div>
         </form>

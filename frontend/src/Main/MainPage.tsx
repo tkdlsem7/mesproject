@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
+import { useAuth } from "../lib/AuthContext"; // ✅ 전역 auth/이름 가져오기
 
 // CRA/Vite 공용: 환경변수 → 없으면 '/api'
 export const API_BASE =
@@ -46,6 +47,12 @@ type NavGroup = { key: string; label: string; items: NavItem[] };
 const MainPage: React.FC<{ userName?: string }> = ({ userName }) => {
   const navigate = useNavigate();
   const location = useLocation();
+
+  // ✅ 전역 로그인 정보(AuthContext)에서 이름/권한 가져오기
+  const { manager: ctxManager, auth, logout } = useAuth();
+
+  // ✅ 표시할 이름: prop(userName)이 있으면 우선, 없으면 전역 manager 사용
+  const displayName = userName && userName.trim() ? userName.trim() : (ctxManager ?? "사용자");
 
   /* =========================
      라우팅 상수
@@ -133,16 +140,50 @@ const MainPage: React.FC<{ userName?: string }> = ({ userName }) => {
   );
 
   /* =========================
+     ✅ 권한 가드 이동 함수
+     - 장비이동 / Row data 페이지는 auth >= 1 이어야 이동 가능
+     ========================= */
+  const guardedNavigate = (to: string) => {
+
+    const authLabel = auth === null ? "null" : String(auth);
+    const needsAuth1 = to === ROUTE_MACHINE_MOVING || to === ROUTE_ROW;
+    const needsAuth2 = to === ROUTE_OPTIONS;
+    // auth가 null이면 0처럼 취급(미로그인/미설정)
+    const currentAuth = auth ?? 0;
+
+    if (needsAuth1 && currentAuth < 1) {
+      // 요청대로: 가공 없이 "받아온 상태" 그대로 출력
+      alert(`권한이 부족합니다.\n이름: ${displayName}\n권한: ${authLabel}`);
+      return;
+    }
+
+
+    if (needsAuth2 && currentAuth < 2) {
+      alert(`권한이 부족합니다.\n이름: ${displayName}\n권한: ${authLabel}`);
+      return;
+    }
+
+    navigate(to);
+  };
+
+  /* =========================
      로그아웃
      ========================= */
   const handleLogout = () => {
     try {
-      localStorage.removeItem("access_token");
+      // ✅ AuthContext의 logout()이 localStorage 정리까지 함
+      logout();
+    } catch {}
+
+    // 혹시 sessionStorage를 쓰는 경우 대비
+    try {
       sessionStorage.removeItem("access_token");
     } catch {}
+
     try {
       delete axios.defaults.headers.common["Authorization"];
     } catch {}
+
     navigate("/", { replace: true });
   };
 
@@ -516,9 +557,8 @@ const MainPage: React.FC<{ userName?: string }> = ({ userName }) => {
     setOpenGroups((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // ✅ 사이드바: "페이지 이동 기능만"
+  // ✅ 사이드바: "페이지 이동 기능 + auth 가드"
   const Sidebar: React.FC = () => {
-    const displayName = userName && userName.trim() ? userName.trim() : "사용자";
     const initial = displayName.slice(0, 1);
     const activePath = location.pathname;
 
@@ -567,7 +607,7 @@ const MainPage: React.FC<{ userName?: string }> = ({ userName }) => {
                         return (
                           <button
                             key={it.to}
-                            onClick={() => navigate(it.to)}
+                            onClick={() => guardedNavigate(it.to)} // ✅ 여기서 권한 체크 후 이동
                             type="button"
                             className={[
                               "w-full rounded-xl px-3 py-2 text-left transition",
@@ -624,7 +664,7 @@ const MainPage: React.FC<{ userName?: string }> = ({ userName }) => {
                     메인 대시보드
                   </div>
                   <div className="mt-1 text-xs text-slate-500">
-                    {userName && userName.trim() ? `${userName} 님` : "사용자"} · 생산 현황 요약
+                    {displayName} · 생산 현황 요약
                   </div>
                 </div>
 

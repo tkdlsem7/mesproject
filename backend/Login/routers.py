@@ -24,8 +24,9 @@ def register(payload: UserRegister, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="이미 가입된 아이디입니다.")
     user = User(id=payload.id, pw=hash_password(payload.pw), name=payload.name)
     db.add(user); db.commit(); db.refresh(user)
-    token = create_access_token(subject=user.id, extra={"name": user.name})
-    return TokenResponse(access_token=token, name=user.name)
+    token = create_access_token(subject=user.id, extra={"name": user.name, "auth": int(user.auth)})
+    return TokenResponse(access_token=token, name=user.name, auth=int(user.auth), )
+
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: UserLogin, db: Session = Depends(get_db)):
@@ -41,5 +42,5 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
         ok = True
     if not ok:
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
-    token = create_access_token(subject=user.id, extra={"name": user.name})
-    return TokenResponse(access_token=token, name=user.name)
+    token = create_access_token(subject=user.id, extra={"name": user.name, "auth": int(user.auth)})
+    return TokenResponse(access_token=token, name=user.name, auth=int(user.auth),)

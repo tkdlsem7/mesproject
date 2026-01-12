@@ -1,23 +1,19 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
-/** ─────────────────────────────────────────────────────────────
- *  전역 인증 컨텍스트
- *   - userNo: 백엔드에서 부여되는 유저 번호(있으면 사용)
- *   - manager: 화면에 표시할 이름(= 로그인 응답의 name)
- *   - login(name, userNo?): 로그인 처리(컨텍스트/로컬스토리지 동기화)
- *   - logout(): 로그아웃 처리(컨텍스트/로컬스토리지 초기화)
- *  ※ localStorage 키는 기존 핸들러와 동일: access_token, user_name
- *  ───────────────────────────────────────────────────────────── */
-
 type AuthContextType = {
   userNo: number | null;
   manager: string | null;
+  auth: number | null; // ✅ 추가(권한)
 
   setUserNo: (no: number | null) => void;
   setManager: (name: string | null) => void;
+  setAuth: (auth: number | null) => void; // ✅ 추가
 
   isAuthed: boolean;
-  login: (name: string, userNo?: number | null) => void;
+
+  // ✅ 기존 호출 호환: login(name, userNo?)는 그대로 동작
+  // ✅ auth는 3번째 인자로 선택적으로 전달 가능
+  login: (name: string, userNo?: number | null, auth?: number | null) => void;
   logout: () => void;
 };
 
@@ -27,22 +23,32 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 // 로컬스토리지 키 상수(핸들러와 동일해야 함)
 const LS_TOKEN = "access_token";
 const LS_NAME = "user_name";
-const LS_USERNO = "user_no"; // 선택사항: 필요 시 저장
+const LS_USERNO = "user_no";     // 선택사항: 필요 시 저장
+const LS_AUTH = "user_auth";     // ✅ 추가: auth 저장 키
 
 export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   // 전역 상태
   const [userNo, setUserNo] = useState<number | null>(null);
   const [manager, setManager] = useState<string | null>(null);
+  const [auth, setAuth] = useState<number | null>(null); // ✅ 추가
 
   // 앱 시작 시 localStorage 값을 읽어와 상태 복구
   useEffect(() => {
     try {
       const name = localStorage.getItem(LS_NAME);
       const noStr = localStorage.getItem(LS_USERNO);
+      const authStr = localStorage.getItem(LS_AUTH); // ✅ 추가
+
       if (name) setManager(name);
+
       if (noStr) {
         const n = Number(noStr);
         if (!Number.isNaN(n)) setUserNo(n);
+      }
+
+      if (authStr) {
+        const a = Number(authStr);
+        if (!Number.isNaN(a)) setAuth(a);
       }
     } catch {
       // 스토리지 접근 실패 시 무시
@@ -57,16 +63,22 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     } catch {
       return false;
     }
-  }, [manager, userNo]); // 이름/번호가 바뀌면 재계산
+  }, [manager, userNo, auth]); // ✅ auth도 포함(값 변경 시 재계산)
 
   // 로그인 성공 시 호출(예: 로그인 폼에서 API 성공 후)
-  const login = (name: string, no: number | null = null) => {
+  const login = (name: string, no: number | null = null, a: number | null = null) => {
     setManager(name);
     setUserNo(no);
+    setAuth(a); // ✅ 추가
 
     try {
       localStorage.setItem(LS_NAME, name);
+
       if (no !== null) localStorage.setItem(LS_USERNO, String(no));
+      else localStorage.removeItem(LS_USERNO);
+
+      if (a !== null) localStorage.setItem(LS_AUTH, String(a)); // ✅ 추가
+      else localStorage.removeItem(LS_AUTH);
     } catch {
       /* noop */
     }
@@ -76,18 +88,30 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const logout = () => {
     setManager(null);
     setUserNo(null);
+    setAuth(null); // ✅ 추가
     try {
       localStorage.removeItem(LS_TOKEN);
       localStorage.removeItem(LS_NAME);
       localStorage.removeItem(LS_USERNO);
+      localStorage.removeItem(LS_AUTH); // ✅ 추가
     } catch {
       /* noop */
     }
   };
 
   const value = useMemo<AuthContextType>(
-    () => ({ userNo, manager, setUserNo, setManager, isAuthed, login, logout }),
-    [userNo, manager, isAuthed]
+    () => ({
+      userNo,
+      manager,
+      auth,       // ✅ 추가
+      setUserNo,
+      setManager,
+      setAuth,    // ✅ 추가
+      isAuthed,
+      login,
+      logout,
+    }),
+    [userNo, manager, auth, isAuthed]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
