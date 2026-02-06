@@ -2,7 +2,10 @@
 from __future__ import annotations
 from sqlalchemy import Column, BigInteger, Text, Date, Numeric, Integer, DateTime, func
 from backend.db.database import Base  # 프로젝트의 Base import 경로에 맞춰 수정
+from backend.MainDashboard.models import EquipProgress
+from backend.Calender.models import EquipmentSchedule
 
+__all__ = ["EquipProgress","EquipmentSchedule"]
 
 class SetupSheetAll(Base):
     __tablename__ = "setup_sheet_all"
@@ -32,8 +35,13 @@ class SetupSheetAll(Base):
     defect_group = Column(Text, nullable=True)     # 불량구분
     defect_location = Column(Text, nullable=True)  # 불량위치
 
+    # ✅ 비고(remark) 추가
+    remark = Column(Text, nullable=True)
+    apply_text = Column(Text, nullable=True)
+
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
     )
+

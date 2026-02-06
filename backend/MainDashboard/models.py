@@ -12,12 +12,6 @@ from backend.db.database import Base  # ✅ 공용 Base
 
 
 class EquipProgress(Base):
-    """
-    equip_progress
-      no(serial4) | machine_id(varchar20) | progress(numeric(5,2)) | manager(varchar50)
-      shipping_date(date) | customer(varchar50) | slot_code(varchar5) | note(text)
-      site(varchar30) | serial_number(varchar50) | status(varchar20)  ← ★ 추가
-    """
     __tablename__ = "equip_progress"
 
     no = Column(Integer, primary_key=True, index=True, autoincrement=True)
@@ -34,6 +28,7 @@ class EquipProgress(Base):
     site           = Column(String(30),  nullable=True)               # 본사/...
     serial_number  = Column(String(50),  nullable=True)
     status         = Column(String(20),  nullable=True)               # ★ 추가: '가능' | '불가능'
+    chiller_serial_number = Column(String(50), nullable=True)
 
     def __repr__(self) -> str:
         return f"<EquipProgress slot={self.slot_code} machine={self.machine_id} status={getattr(self, 'status', None)}>"

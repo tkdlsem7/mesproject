@@ -43,3 +43,4 @@ class CalendarEventUpdate(BaseModel):
 
 class DeleteResult(BaseModel):
     deleted: bool
+

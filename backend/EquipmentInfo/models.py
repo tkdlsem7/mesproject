@@ -6,8 +6,9 @@
 from backend.MainDashboard.models import EquipProgress  # 기존 선언 재사용
 from sqlalchemy import Column, BigInteger, Integer, String, DateTime, SmallInteger, text ,Date
 from backend.db.database import Base
+from backend.Calender.models import EquipmentSchedule
 
-__all__ = ["EquipProgress"]
+__all__ = ["EquipProgress", "EquipmentSchedule"]
 
 
 

@@ -19,18 +19,19 @@ from .schemas import SlotOut, MoveRequest, OK
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
-# --- A/B/I/JIN 매핑 ---
 BUILDING_PREFIX = {
     "A": tuple("ABCDEF"),
-    "B": tuple("GHIJKL"),   # 실제 환경에 맞게 수정
-    "I": tuple("I"),        # 실제 환경에 맞게 수정
-    "JIN": tuple(),         # ✅ 진우리: slot_code prefix 필터 없음
+    "B": tuple("GHIJKL"),
+    "I": tuple("I"),
+    "JIN": tuple(),
 }
 
 JIN_SITE_NAME = "진우리"
 
+
 def _is_empty(machine_id: str | None) -> bool:
     return (machine_id or "").strip() == ""
+
 
 def _sort_key(slot_code: str) -> tuple[str, int]:
     m = re.match(r"^([A-Za-z])\s*0*([0-9]+)$", slot_code or "")
@@ -38,11 +39,8 @@ def _sort_key(slot_code: str) -> tuple[str, int]:
         return ("Z", 9999)
     return (m.group(1).upper(), int(m.group(2)))
 
+
 def _resolve_jin_by_pos(db: Session, pos_code: str) -> Optional[EquipProgress]:
-    """
-    pos_code: 'JIN1', 'JIN2', ...
-    site='진우리' 장비를 machine_id 기준으로 정렬한 다음 N번째를 반환
-    """
     m = re.match(r"^JIN(\d+)$", (pos_code or "").upper())
     if not m:
         return None
@@ -59,11 +57,8 @@ def _resolve_jin_by_pos(db: Session, pos_code: str) -> Optional[EquipProgress]:
     )
     return db.execute(stmt).scalars().first()
 
+
 def _resolve_src_row(db: Session, slot_code: str) -> Optional[EquipProgress]:
-    """
-    기본: slot_code로 찾기
-    예외: 'JINxx'는 진우리 n번째 장비로 해석
-    """
     sc = (slot_code or "").strip().upper()
     if sc.startswith("JIN"):
         return _resolve_jin_by_pos(db, sc)
@@ -83,16 +78,13 @@ def list_slots(
         raise HTTPException(status_code=400, detail="지원하지 않는 building 입니다.")
 
     prefixes: Iterable[str] = BUILDING_PREFIX[b]
-
     stmt = select(EquipProgress).where(EquipProgress.site == site).limit(limit).offset(offset)
 
-    # ✅ JIN은 slot_code prefix 필터를 적용하지 않음
     if b != "JIN":
         stmt = stmt.where(or_(*[EquipProgress.slot_code.ilike(f"{p}%") for p in prefixes]))
 
     rows: list[EquipProgress] = list(db.execute(stmt).scalars().all())
 
-    # ✅ 정렬
     if b == "JIN":
         rows.sort(key=lambda r: ((r.machine_id or "").lower(), int(getattr(r, "no", 0) or 0)))
     else:
@@ -109,6 +101,10 @@ def list_slots(
             site=r.site,
             customer=getattr(r, "customer", None),
             serial_number=getattr(r, "serial_number", None),
+
+            # ✅ 추가
+            chiller_serial_number=getattr(r, "chiller_serial_number", None),
+
             note=getattr(r, "note", None),
             status=getattr(r, "status", None),
         )
@@ -121,7 +117,6 @@ def ship_equipment(
     slot_code: str = Path(..., min_length=2, max_length=10, description="원본 슬롯 코드 (예: A7, JIN12)"),
     db: Session = Depends(get_db),
 ):
-    # ✅ JINxx면 진우리 n번째 장비로 해석
     row: EquipProgress | None = _resolve_src_row(db, slot_code)
 
     if not row:
@@ -157,11 +152,6 @@ def move_equipment(
     payload: MoveRequest = ...,
     db: Session = Depends(get_db),
 ):
-    """
-    장비 이동
-    - JINxx: 진우리 n번째 장비를 src로 해석
-    - dst는 기존대로 dst_slot_code로 찾음(환경상 slot_code 유니크하다는 가정)
-    """
     src: EquipProgress | None = _resolve_src_row(db, slot_code)
     if not src:
         raise HTTPException(status_code=404, detail="원본 슬롯/장비를 찾을 수 없습니다.")
@@ -181,10 +171,16 @@ def move_equipment(
     dst.manager = src.manager
     dst.progress = src.progress
     dst.shipping_date = src.shipping_date
+
     if hasattr(dst, "customer") and hasattr(src, "customer"):
         dst.customer = getattr(src, "customer", None)
     if hasattr(dst, "serial_number") and hasattr(src, "serial_number"):
         dst.serial_number = getattr(src, "serial_number", None)
+
+    # ✅ 추가: 칠러 시리얼
+    if hasattr(dst, "chiller_serial_number") and hasattr(src, "chiller_serial_number"):
+        dst.chiller_serial_number = getattr(src, "chiller_serial_number", None)
+
     if hasattr(dst, "note") and hasattr(src, "note"):
         dst.note = getattr(src, "note", None)
     if hasattr(dst, "status") and hasattr(src, "status"):
@@ -195,10 +191,16 @@ def move_equipment(
     src.manager = None
     src.progress = 0
     src.shipping_date = None
+
     if hasattr(src, "customer"):
         src.customer = None
     if hasattr(src, "serial_number"):
         src.serial_number = None
+
+    # ✅ 추가: 칠러 시리얼 초기화
+    if hasattr(src, "chiller_serial_number"):
+        src.chiller_serial_number = None
+
     if hasattr(src, "note"):
         src.note = None
     if hasattr(src, "status"):

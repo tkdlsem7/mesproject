@@ -28,7 +28,7 @@ class RowsResponse(BaseModel):
 # ──────────────────────────────────────
 #  리드타임 계산용 스키마
 # ──────────────────────────────────────
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 
 class LeadTimeItem(BaseModel):
@@ -54,3 +54,19 @@ class LeadTimeRequest(BaseModel):
 
 class LeadTimeResponse(BaseModel):
     items: List[LeadTimeItem]
+
+
+# ──────────────────────────────────────
+#  manager 매핑(입고로그에서 담당자 조회)
+# ──────────────────────────────────────
+
+
+class ManagerMapRequest(BaseModel):
+    """프론트에서 machine_no 목록을 보내면 담당자(manager) 맵을 반환"""
+
+    machine_nos: List[str]
+
+
+class ManagerMapResponse(BaseModel):
+    # key: lower(machine_no)
+    managers: Dict[str, str] = {}

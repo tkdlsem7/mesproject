@@ -104,7 +104,7 @@ export default function JinwooriView({
     return arr;
   }, [rows]);
 
-  const COLS = 7;
+  const COLS = 10;
   const ROWS =10; // 필요시 10으로 바꾸면 70칸(7x10)
   const TOTAL = COLS * ROWS;
 

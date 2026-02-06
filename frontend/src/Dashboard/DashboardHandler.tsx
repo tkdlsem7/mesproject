@@ -1,30 +1,21 @@
 type AnyEnv = Record<string, any>;
 
 const getEnv = () => {
-  // CRA 환경변수만 사용 (REACT_APP_... 형태)
   const craEnv: AnyEnv =
     (typeof process !== "undefined" ? (process as any).env : {}) || {};
 
   const nodeEnv = craEnv.NODE_ENV || process.env.NODE_ENV || "development";
 
-  // 1) .env에 값이 있으면 그거 사용
-  //    예: REACT_APP_API_BASE=http://backend:8000  (docker dev)
-  //        REACT_APP_API_BASE=http://192.168.101.1:8000 (서버 직접)
   let API_BASE = String(craEnv.REACT_APP_API_BASE || "").replace(/\/+$/, "");
 
-  // 2) 없으면 개발/운영에 따라 기본값
   if (!API_BASE) {
     if (nodeEnv === "development") {
-      // 로컬 개발: 도커 dev 백엔드
       API_BASE = "http://localhost:8000";
     } else {
-      // 운영: 동일 출처(/api 프록시) 사용 → BASE 비워두기
       API_BASE = "";
     }
   }
 
-  // PREFIX: 기본은 '/api'
-  // .env에 REACT_APP_API_PREFIX가 있으면 그걸로 덮어씀
   const rawPrefix = craEnv.REACT_APP_API_PREFIX ?? "/api";
   const API_PREFIX = rawPrefix
     ? `/${String(rawPrefix).replace(/^\/+/, "").replace(/\/+$/, "")}`
@@ -57,9 +48,12 @@ export type SlotRow = {
   manager: string | null;
   site: string | null;
 
-  // 프리필용 기타 필드
   customer: string | null;
   serial_number: string | null;
+
+  // ✅ 추가
+  chiller_serial_number: string | null;
+
   note: string | null;
   status: SlotStatus;
 };
@@ -90,23 +84,26 @@ const normalizeSlotRow = (raw: any): SlotRow => {
 
     customer: raw?.customer ?? null,
     serial_number: raw?.serial_number ?? null,
+
+    // ✅ 추가
+    chiller_serial_number: raw?.chiller_serial_number ?? null,
+
     note: raw?.note ?? null,
     status,
   };
 };
 
 // -------------------- API --------------------
-/** 슬롯 목록 조회 (/api 경로 우선 + 폴백) */
 export async function fetchSlots(opts: { site: string; building: "A" | "B" | "I" }): Promise<SlotRow[]> {
   const qs = new URLSearchParams({ site: opts.site, building: opts.building }).toString();
   const path = `/dashboard/slots?${qs}`;
 
   const urls = Array.from(
     new Set([
-      `/api${path}`,            // ✅ CRA 프록시(동일 출처) 1순위
-      buildUrl(path),           // VITE/CRA ENV 조합 (API_BASE+API_PREFIX)
-      `${API_BASE}${path}`,     // BASE만 설정된 경우
-      path,                     // 최후 폴백(동일 출처/리버스 프록시)
+      `/api${path}`,
+      buildUrl(path),
+      `${API_BASE}${path}`,
+      path,
     ])
   );
 
@@ -129,12 +126,11 @@ export async function fetchSlots(opts: { site: string; building: "A" | "B" | "I"
   throw new Error("슬롯 조회 실패: 모든 후보 URL 404");
 }
 
-/** 출하 처리 (/api 경로 우선 + 폴백) */
 export async function shipEquipment(slotCode: string): Promise<void> {
   const path = `/dashboard/ship/${encodeURIComponent(slotCode)}`;
   const urls = Array.from(
     new Set([
-      `/api${path}`,            // ✅ CRA 프록시 1순위
+      `/api${path}`,
       buildUrl(path),
       `${API_BASE}${path}`,
       path,

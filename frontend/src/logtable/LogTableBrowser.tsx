@@ -188,7 +188,7 @@ const parseMachineNo = (machineNo: string) => {
         r.ts_minutes ??
         r.ts_time ??
         (r.ts_hours != null && r.ts_hours !== ""
-          ? Math.round(Number(r.ts_hours) * 60)
+          ? Math.round(Number(r.ts_hours))
           : "");
 
       return {
@@ -207,8 +207,8 @@ const parseMachineNo = (machineNo: string) => {
         "세부 불량": r.defect_detail ?? "",
         품질점수: r.quality_score ?? "",
         "T.S 소요 시간\n(단위 : 분)": tsMinutes,
-        적용: r.apply ?? "",
-        비고: r.note ?? "",
+        적용: r.apply ?? r.apply_text ?? (r as any).applyText ?? "",
+        비고: r.remark ?? r.note ?? "",
         담당자: r.owner ?? r.manager ?? "",
         불량구분: r.defect_group ?? r.defect_category ?? "",
         "불량 위치": r.defect_location ?? "",
@@ -468,10 +468,8 @@ const LogTableBrowser: React.FC = () => {
 
   // setup_sheet_all 관련 상태
   const isSetupSheetAll = selected === "setup_sheet_all";
-  const [showRawModal, setShowRawModal] = useState(false);
-  const [rawApply, setRawApply] = useState("");
-  const [rawNote, setRawNote] = useState("");
-  const [rawOwner, setRawOwner] = useState("");
+  // ✅ Rawdata 출력 시 담당자 입력 모달 제거(헷갈림 방지)
+  //    - 담당자는 equipment_receipt_log의 manager를 machine_no 기준으로 자동 매칭
 
   const selectedMeta = useMemo(
     () => tables.find((t) => t.name === selected),
@@ -696,25 +694,109 @@ const LogTableBrowser: React.FC = () => {
         }
       }
 
-      // 2) Rawdata row 변환 + 공통 값 주입(적용/비고/담당자)
-      const rawRows = toRawdataRows(allRows).map((r) => ({
-        ...r,
-        적용: rawApply,
-        비고: rawNote,
-        담당자: rawOwner,
-      }));
+      // 2) Rawdata row 변환
+      //    - 적용/비고는 DB 값 그대로(없으면 빈칸)
+      //    - 호기 전체에 '복사 적용'하지 않음
+      let rawRows = toRawdataRows(allRows);
 
-      // 3) 리드타임 3개(사내입고→출하/완료/시작) 백엔드에서 받아오기
-      //    (프로젝트에서 이미 사용 중인 엔드포인트가 있다고 가정)
-      //    - 없으면 빈 맵으로 처리
-      let leadTimeMap: any = {};
+      // 2-1) ✅ 담당자 자동 매칭
+      //      equipment_receipt_log.machine_no 와 setup_sheet_all.machine_no(호기)를 비교해서
+      //      최신 manager를 찾아 Rawdata/요약에 넣습니다.
       try {
-        const { data } = await axios.get(`${API_BASE}/logcharts/leadtime3`, {
-          timeout: 30000,
-        });
-        leadTimeMap = data ?? {};
-      } catch {
-        leadTimeMap = {};
+        const machineNos = Array.from(
+          new Set(
+            rawRows
+              .map((r) => String((r as any)["호기"] ?? "").trim())
+              .filter((s) => !!s)
+          )
+        );
+
+        if (machineNos.length) {
+          const probe2 = await axios.get<RowsRes>(`${API_BASE}/logs/rows`, {
+            params: { table: "equipment_receipt_log", limit: 1, offset: 0 },
+            timeout: 30000,
+          });
+
+          const total2 = probe2.data.total;
+          const cols2 = probe2.data.columns ?? [];
+          const hasManager = cols2.includes("manager");
+          const hasReceiveDate = cols2.includes("receive_date");
+          const hasId = cols2.includes("id");
+
+          if (hasManager && total2 > 0) {
+            let chunk2 = 500;
+            let fetched2 = 0;
+            const receiptRows: Record<string, any>[] = [];
+
+            while (fetched2 < total2) {
+              try {
+                const { data } = await axios.get<RowsRes>(`${API_BASE}/logs/rows`, {
+                  params: {
+                    table: "equipment_receipt_log",
+                    limit: chunk2,
+                    offset: fetched2,
+                  },
+                  timeout: 30000,
+                });
+                receiptRows.push(...data.rows);
+                fetched2 += data.rows.length;
+                if (data.rows.length === 0) break;
+              } catch (e: any) {
+                if (e?.response?.status === 422 && chunk2 > 50) {
+                  chunk2 = Math.max(50, Math.floor(chunk2 / 2));
+                  continue;
+                }
+                throw e;
+              }
+            }
+
+            // machine_no(lower) -> { manager, ts }
+            const managerMap: Record<string, { manager: string; ts: number; id: number }> = {};
+
+            const wantSet = new Set(machineNos.map((m) => m.toLowerCase()));
+            for (const rr of receiptRows) {
+              const mn = String(rr.machine_no ?? "").trim();
+              if (!mn) continue;
+              const key = mn.toLowerCase();
+              if (!wantSet.has(key)) continue;
+
+              const mgr = String(rr.manager ?? "").trim();
+              if (!mgr) continue;
+
+              let ts = 0;
+              if (hasReceiveDate) {
+                const d = parseDate(rr.receive_date);
+                ts = d ? d.getTime() : 0;
+              }
+
+              const id = hasId ? Number(rr.id ?? 0) : 0;
+              const prev = managerMap[key];
+              if (!prev) {
+                managerMap[key] = { manager: mgr, ts, id };
+              } else {
+                // 최신 우선: receive_date -> id
+                if (ts > prev.ts || (ts === prev.ts && id > prev.id)) {
+                  managerMap[key] = { manager: mgr, ts, id };
+                }
+              }
+            }
+
+            rawRows = rawRows.map((r) => {
+              const key = String((r as any)["호기"] ?? "")
+                .trim()
+                .toLowerCase();
+              const mapped = managerMap[key]?.manager ?? "";
+              return {
+                ...r,
+                // ✅ manager가 있으면 그걸 사용, 없으면 기존(혹시 있다면) 그대로
+                담당자: mapped || String((r as any)["담당자"] ?? ""),
+              };
+            });
+          }
+        }
+      } catch (e) {
+        // 담당자 매칭 실패해도 export는 진행
+        console.warn("manager auto-map failed", e);
       }
 
       const summaryRows = buildSummaryRows(rawRows);
@@ -881,7 +963,7 @@ const LogTableBrowser: React.FC = () => {
                 <button
                   className="h-10 rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
                   disabled={loadingMeta || loadingRows || exporting}
-                  onClick={() => setShowRawModal(true)}
+                  onClick={() => void exportSetupSheetRaw()}
                 >
                   Rawdata 출력
                 </button>
@@ -1038,74 +1120,6 @@ const LogTableBrowser: React.FC = () => {
           </div>
         </div>
 
-        {/* Rawdata 입력 모달 */}
-        {showRawModal && (
-          <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40">
-            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
-              <h2 className="text-base font-semibold text-slate-900">
-                Rawdata / 차분보고서취합 출력
-              </h2>
-              <p className="mt-1 text-xs text-slate-500">
-                setup_sheet_all 데이터 기준으로 Rowdata CSV와 차분보고서취합
-                CSV 두 개를 생성합니다. 아래 내용은 모든 행에 동일하게 들어갑니다.
-              </p>
-
-              <div className="mt-4 space-y-3">
-                <div>
-                  <label className="text-xs font-medium text-slate-700">
-                    적용
-                  </label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-sky-300 focus:ring-2 focus:ring-sky-200"
-                    value={rawApply}
-                    onChange={(e) => setRawApply(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-700">
-                    비고
-                  </label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-sky-300 focus:ring-2 focus:ring-sky-200"
-                    value={rawNote}
-                    onChange={(e) => setRawNote(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-700">
-                    담당자
-                  </label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-sky-300 focus:ring-2 focus:ring-sky-200"
-                    value={rawOwner}
-                    onChange={(e) => setRawOwner(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="mt-6 flex justify-end gap-2">
-                <button
-                  type="button"
-                  className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                  onClick={() => setShowRawModal(false)}
-                >
-                  취소
-                </button>
-                <button
-                  type="button"
-                  className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600 disabled:opacity-60"
-                  disabled={exporting}
-                  onClick={async () => {
-                    await exportSetupSheetRaw();
-                    setShowRawModal(false);
-                  }}
-                >
-                  {exporting ? "내보내는 중…" : "CSV 두 개 다운로드"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

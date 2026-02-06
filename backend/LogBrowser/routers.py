@@ -13,6 +13,8 @@ from .schemas import (
     LeadTimeRequest,
     LeadTimeResponse,
     LeadTimeItem,
+    ManagerMapRequest,
+    ManagerMapResponse,
 )
 
 router = APIRouter(prefix="/logs", tags=["LogBrowser"])
@@ -127,6 +129,66 @@ def get_rows(
     rows = [dict(r) for r in db.execute(stmt).mappings().all()]
 
     return RowsResponse(columns=col_names, rows=rows, total=total)
+
+
+# ──────────────────────────────────────
+#  담당자(manager) 맵 조회 (/logs/manager-map)
+#  - equipment_receipt_log 에서 machine_no별 최신 manager 를 가져옴
+#  - 프론트 엑셀(CSV) 출력에서 '담당자' 컬럼 채우기 용도
+# ──────────────────────────────────────
+
+
+@router.post("/manager-map", response_model=ManagerMapResponse)
+def get_manager_map(
+    payload: ManagerMapRequest,
+    db: Session = Depends(get_db),
+):
+    # 입력 정리(공백 제거 + 중복 제거)
+    machine_nos = sorted({m.strip() for m in payload.machine_nos if m and m.strip()})
+    if not machine_nos:
+        return ManagerMapResponse(managers={})
+
+    md = MetaData()
+    receipt_tbl = Table(
+        "equipment_receipt_log", md, autoload_with=db.bind, schema="public"
+    )
+
+    # 방어(컬럼 없을 때)
+    if "machine_no" not in receipt_tbl.c or "manager" not in receipt_tbl.c:
+        return ManagerMapResponse(managers={})
+
+    lower_mns = [m.lower() for m in machine_nos]
+    mn_l = func.lower(receipt_tbl.c.machine_no)
+
+    order_cols = []
+    if "receive_date" in receipt_tbl.c:
+        order_cols.append(receipt_tbl.c.receive_date.desc().nullslast())
+    if "id" in receipt_tbl.c:
+        order_cols.append(receipt_tbl.c.id.desc())
+    if not order_cols:
+        order_cols = [mn_l.asc()]
+
+    rn = func.row_number().over(partition_by=mn_l, order_by=order_cols).label("rn")
+
+    subq = (
+        select(
+            mn_l.label("mn"),
+            receipt_tbl.c.manager.label("manager"),
+            rn,
+        )
+        .where(mn_l.in_(lower_mns))
+        .subquery()
+    )
+
+    stmt = select(subq.c.mn, subq.c.manager).where(subq.c.rn == 1)
+    rows = db.execute(stmt).mappings().all()
+
+    managers: Dict[str, str] = {r["mn"]: (r.get("manager") or "") for r in rows}
+    # 요청한 키는 항상 존재하도록(없으면 빈칸)
+    for k in lower_mns:
+        managers.setdefault(k, "")
+
+    return ManagerMapResponse(managers=managers)
 
 
 # ──────────────────────────────────────

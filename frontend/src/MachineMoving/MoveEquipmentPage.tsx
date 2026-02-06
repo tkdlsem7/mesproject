@@ -13,9 +13,7 @@ type EquipmentRow = {
 
 // 프로젝트 설정에 따라 /api 프리픽스를 사용하지 않으면 "" 로 변경
 export const API_BASE =
-  process.env.NODE_ENV === "production"
-    ? "/api"
-    : "http://localhost:8000/api";
+  process.env.NODE_ENV === "production" ? "/api" : "http://localhost:8000/api";
 
 // 요구: 사이트는 3개 고정
 const SITES = ["본사", "진우리", "라인대기"] as const;
@@ -60,7 +58,7 @@ const MoveEquipmentPage: React.FC = () => {
   );
   const initialSelected = url.get("machine_id") ?? "";
 
-  // 선택된 사이트
+  // 선택된 사이트(좌측 목록 필터용)
   const [site, setSite] = React.useState<string>("본사");
 
   // 좌측 리스트 데이터/상태
@@ -107,7 +105,8 @@ const MoveEquipmentPage: React.FC = () => {
           setChecked((m) => ({ ...m, [initialSelected]: true }));
           setMovePlan((p) => ({
             ...p,
-            [initialSelected]: { site, slot: "" },
+            // ✅ 이동 Site가 "진우리"면 Slot은 "1" 고정
+            [initialSelected]: { site, slot: site === "진우리" ? "1" : "" },
           }));
         }
       } catch {
@@ -152,7 +151,13 @@ const MoveEquipmentPage: React.FC = () => {
       setMovePlan((p) => {
         const cp = { ...p };
         filteredRows.forEach((r) => {
-          cp[r.machine_id] = cp[r.machine_id] || { site, slot: "" };
+          // ✅ 기본값 생성 시: "진우리"면 slot="1" 고정
+          cp[r.machine_id] =
+            cp[r.machine_id] ||
+            ({
+              site,
+              slot: site === "진우리" ? "1" : "",
+            } as any);
         });
         return cp;
       });
@@ -164,23 +169,58 @@ const MoveEquipmentPage: React.FC = () => {
       const next = !m[mid];
       const out = { ...m, [mid]: next };
       if (next) {
-        setMovePlan((p) => ({ ...p, [mid]: p[mid] || { site, slot: "" } }));
+        setMovePlan((p) => ({
+          ...p,
+          // ✅ 체크로 인해 기본 plan 생성 시: "진우리"면 slot="1" 고정
+          [mid]: p[mid] || { site, slot: site === "진우리" ? "1" : "" },
+        }));
       }
       return out;
     });
   };
 
+  // ✅ 이동 Site 변경 로직: "진우리"면 slot="1" 강제
   const setPlanSite = (mid: string, v: string) =>
-    setMovePlan((p) => ({ ...p, [mid]: { ...p[mid], site: v } }));
+    setMovePlan((p) => {
+      const prev = p[mid] || {};
+      if (v === "진우리") {
+        return { ...p, [mid]: { ...prev, site: v, slot: "1" } };
+      }
 
+      // 진우리에서 다른 곳으로 바꿀 때 slot을 비워서 재입력 유도
+      const nextSlot =
+        prev.site === "진우리" && (prev.slot ?? "") === "1"
+          ? ""
+          : prev.slot ?? "";
+
+      return { ...p, [mid]: { ...prev, site: v, slot: nextSlot } };
+    });
+
+  // ✅ 이동 Slot 변경 로직: site가 "진우리"면 변경 무시 + "1" 유지
   const setPlanSlot = (mid: string, v: string) =>
-    setMovePlan((p) => ({ ...p, [mid]: { ...p[mid], slot: v.toUpperCase() } }));
+    setMovePlan((p) => {
+      const cur = p[mid] || {};
+      if ((cur.site ?? "") === "진우리") {
+        return { ...p, [mid]: { ...cur, slot: "1" } };
+      }
+      return { ...p, [mid]: { ...cur, slot: v.toUpperCase() } };
+    });
 
   // ✅ /move/apply 사용 (장비별 목적지 지정)
   const applyMove = async () => {
     const targets = rows
       .filter((r) => checked[r.machine_id])
-      .map((r) => ({ id: r.machine_id, plan: movePlan[r.machine_id] || {} }));
+      .map((r) => {
+        const plan = movePlan[r.machine_id] || {};
+
+        // ✅ 안전장치: site=진우리면 slot="1"로 정규화
+        const normalized =
+          String(plan.site ?? "").trim() === "진우리"
+            ? { ...plan, slot: "1" }
+            : plan;
+
+        return { id: r.machine_id, plan: normalized };
+      });
 
     if (targets.length === 0) {
       alert("이동할 장비를 선택하세요.");
@@ -227,7 +267,7 @@ const MoveEquipmentPage: React.FC = () => {
     } catch (e: any) {
       const resp = e?.response;
 
-        // ★ 409 응답 전체를 로그로 확인
+      // ★ 409 응답 전체를 로그로 확인
       if (resp?.status === 409) {
         console.log("[409 /move/apply] resp.data =", resp.data);
       }
@@ -448,17 +488,16 @@ const MoveEquipmentPage: React.FC = () => {
                   ) : (
                     selectedRows.map((r) => {
                       const plan = movePlan[r.machine_id] || {};
+                      const isJinuri = (plan.site ?? "") === "진우리";
+
                       return (
                         <tr key={r.machine_id} className="hover:bg-gray-50">
                           <td className="px-3 py-2 text-slate-800">
                             {r.machine_id}
                           </td>
-                          <td className="px-3 py-2 text-slate-700">
-                            {r.site}
-                          </td>
-                          <td className="px-3 py-2 text-slate-700">
-                            {r.slot}
-                          </td>
+                          <td className="px-3 py-2 text-slate-700">{r.site}</td>
+                          <td className="px-3 py-2 text-slate-700">{r.slot}</td>
+
                           <td className="px-3 py-2">
                             <select
                               className="rounded-full border border-gray-200 px-3 py-1.5 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
@@ -475,11 +514,17 @@ const MoveEquipmentPage: React.FC = () => {
                               ))}
                             </select>
                           </td>
+
                           <td className="px-3 py-2">
                             <input
-                              className="w-32 rounded-full border border-gray-200 px-3 py-1.5 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
-                              placeholder="새 Slot"
-                              value={plan.slot ?? ""}
+                              className={`w-32 rounded-full border border-gray-200 px-3 py-1.5 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200 ${
+                                isJinuri
+                                  ? "bg-gray-100 text-gray-500 cursor-not-allowed"
+                                  : ""
+                              }`}
+                              placeholder={isJinuri ? "진우리 고정(1)" : "새 Slot"}
+                              disabled={isJinuri}
+                              value={isJinuri ? "1" : plan.slot ?? ""}
                               onChange={(e) =>
                                 setPlanSlot(r.machine_id, e.target.value)
                               }

@@ -1,4 +1,4 @@
-# backend/MainDashboard/schemas.py
+# backend/EquipmentInfo/schemas.py
 from __future__ import annotations
 
 from datetime import date
@@ -7,7 +7,7 @@ from typing import Literal, Optional, List, Annotated
 from pydantic import BaseModel, Field, StringConstraints
 
 MachineId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20)]
-SlotCode  = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=5)]
+SlotCode  = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=10)]
 SiteStr   = Annotated[str, StringConstraints(strip_whitespace=True, max_length=30)]
 SerialStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=50)]
 
@@ -16,14 +16,16 @@ class EquipmentSaveRequest(BaseModel):
     machine_id: MachineId
     shipping_date: Optional[date] = None
 
-    # ✅ 추가: 사용자가 지정한 입고일(미입력 시 백엔드에서 오늘 날짜로 처리)
+    # 사용자가 지정한 입고일(미입력 시 백엔드에서 오늘 날짜로 처리)
     receive_date: Optional[date] = None
 
     manager: Optional[str] = Field(default="")
     customer: Optional[str] = Field(default="")
     slot_code: SlotCode
     site: Optional[SiteStr] = None
+
     serial_number: Optional[SerialStr] = None
+    chiller_serial_number: Optional[SerialStr] = None
 
     status: Optional[Literal["가능", "불가능", "ok", "hold"]] = "불가능"
     note: Optional[str] = None
@@ -46,5 +48,25 @@ class EquipmentOptionOut(BaseModel):
 
 
 class EquipmentReceiptDateOut(BaseModel):
-    # ✅ 가장 최근 입고일(없으면 None)
     receive_date: Optional[date] = None
+
+
+class EquipmentDetailOut(BaseModel):
+    row_no: int
+    machine_id: Optional[str] = None
+    shipping_date: Optional[date] = None
+    receive_date: Optional[date] = None
+
+    manager: str = ""
+    customer: str = ""
+    slot_code: str
+    site: Optional[str] = None
+
+    serial_number: Optional[str] = None
+    chiller_serial_number: Optional[str] = None
+
+    status: Optional[str] = None
+    note: Optional[str] = None
+
+    # 디버깅용(프론트는 무시 가능)
+    found_by: Optional[str] = None

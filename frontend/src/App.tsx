@@ -15,6 +15,8 @@ import SetupDefectEntryPages from "./SetupDefectEntryPage/SetupDefectEntryPage";
 import AttendanceHistoryPage from "./Attendance/AttendanceHistoryPage";
 import LineAccessCurrentPage from "./LineAccess/LineAccessCurrentPage";
 import LineAccessLogsPage from "./LineAccess/LineAccessLogsPage";
+import SetupDefectManagePage from "./SetupDefectEntryPage/SetupDefectManagePage";
+import DefectCatalogPage from "./DefectCatalog/DefectCatalogPage";
 
 import BoardPage from "./Board/Boardpage";
 import BoardNewPage from "./Board/BoardNewPage";
@@ -113,6 +115,7 @@ export default function App() {
       <Route path="/machine-move" element={<MoveEquipmentPage />} />
       <Route path="/troubleshoot" element={<TroubleShootPage />} />
       <Route path="/SetupDefectEntryPage" element={<SetupDefectEntryPages />} />
+      <Route path="/SetupDefectEntryPage/manage" element={<SetupDefectManagePage />} />
 
       <Route path="/board" element={<BoardPage />} />
       <Route path="/board/:no" element={<BoardDetailPage />} />
@@ -120,6 +123,7 @@ export default function App() {
       <Route path="/log/charts" element={<LogChartPage />} />
       <Route path="/gantt" element={<EquipmentGanttPage />} />
       <Route path="/line-access/logs" element={<LineAccessLogsPage />} />
+      <Route path="/defect-catalog" element={<DefectCatalogPage />} />
 
       <Route
         path="/board/new"

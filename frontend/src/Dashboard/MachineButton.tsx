@@ -1,5 +1,5 @@
-// src/Dashboard/MachineButton.tsx
 import React from "react";
+import { useNavigate } from "react-router-dom";
 import { shipEquipment } from "./DashboardHandler";
 
 const colorByProgress = (p: number) => {
@@ -13,22 +13,34 @@ const LS = {
   SELECTED_IS_EMPTY: "selected_machine_is_empty",
   SELECTED_ID: "selected_machine_id",
   SELECTED_AT: "selected_machine_saved_at",
+
+  // ✅ 장비정보 페이지에서 slot/site를 읽는 키들
+  SELECTED_SLOT: "selected_slot",
+  SELECTED_SITE: "selected_site",
+
   INTENT: "machine_info_intent",
 } as const;
 
-// 로그인에서 저장해둔 auth (권한) 키 (프로젝트에서 쓰는 키에 맞추세요)
 const LS_AUTH = "user_auth";
-
 const EMPTY_MARKERS = new Set(["", "-", "empty", "빈슬롯"]);
 
-type InfoIntent = {
+type InfoIntentV2 = {
   machineId: string;
-  fields: { progressEmpty: boolean; shipDateEmpty: boolean; managerEmpty: boolean };
-  values: { progress: number | null; shipDate: string | null; manager: string | null };
-  hasAnyEmpty: boolean;
+  slotCode: string | null;
+  site: string | null;
+  values: {
+    progress: number | null;
+    shipDate: string | null;
+    manager: string | null;
+    customer: string | null;
+    serialNumber: string | null;
+    chillerSerialNumber: string | null; // ✅ 핵심(장비정보 페이지에서 쓰기 쉽게 camelCase)
+    note: string | null;
+    status: "가능" | "불가능" | null;
+  };
   setAt: string;
   origin: "dashboard";
-  version: 1;
+  version: 2;
 };
 
 type Props = {
@@ -40,7 +52,6 @@ type Props = {
   sizeClass?: string;
   className?: string;
 
-  /** 외부에서 auth를 내려줄 수도 있게(선택) */
   userAuth?: number | null;
 
   isOpen?: boolean;
@@ -48,6 +59,8 @@ type Props = {
   onOpenInfo?: () => void;
   onOpenChecklist?: (machineId: string) => void;
   onOpenMove?: (machineId: string) => void;
+  onOpenRowdata?: (machineId: string) => void;
+
   onShipped?: (slotCode: string) => void;
 };
 
@@ -82,6 +95,44 @@ function pickAuthFromJwt(tokenRaw: string | null): number | null {
   }
 }
 
+const authHeaders = (): Record<string, string> => {
+  const t = localStorage.getItem("access_token");
+  return t ? { Authorization: `Bearer ${t}` } : {};
+};
+
+// ✅ /api 우선 + 폴백 URL들로 detail 조회
+async function fetchEquipmentDetailBySlot(site: string | null, slotCode: string) {
+  const s = (site ?? "").trim();
+  const sc = (slotCode ?? "").trim().toUpperCase();
+  const qs = new URLSearchParams({
+    site: s,
+    slot_code: sc,
+  }).toString();
+
+  const path = `/dashboard/equipment/detail?${qs}`;
+  const candidates = Array.from(
+    new Set([
+      `/api${path}`, // 1순위
+      path,          // 리버스 프록시 환경 폴백
+    ])
+  );
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const url = candidates[i];
+    try {
+      const res = await fetch(url, {
+        credentials: "include",
+        headers: { ...authHeaders() },
+      });
+      if (res.ok) return await res.json();
+      if (res.status !== 404) return null;
+    } catch {
+      // ignore and try next
+    }
+  }
+  return null;
+}
+
 export default function MachineButton({
   title,
   progress,
@@ -97,13 +148,21 @@ export default function MachineButton({
   onOpenInfo,
   onOpenChecklist,
   onOpenMove,
+  onOpenRowdata,
   onShipped,
 }: Props) {
+  const navigate = useNavigate();
+
   const [openLocal, setOpenLocal] = React.useState(false);
   const open = typeof isOpen === "boolean" ? isOpen : openLocal;
 
   const toggle = () =>
     typeof isOpen === "boolean" ? onToggleMenu?.() : setOpenLocal((v) => !v);
+
+  const closeMenu = () => {
+    if (typeof isOpen === "boolean") onToggleMenu?.();
+    else setOpenLocal(false);
+  };
 
   const lastToken = React.useMemo(() => {
     const raw = title ?? "";
@@ -129,13 +188,10 @@ export default function MachineButton({
 
     if (fromStorage !== null) return fromStorage;
 
-    // 혹시 토큰 payload에 auth가 들어있으면 그걸로도 폴백
     const tokenRaw = localStorage.getItem("access_token") || sessionStorage.getItem("access_token");
-    const fromJwt = pickAuthFromJwt(tokenRaw);
-    return fromJwt; // null일 수도 있음
+    return pickAuthFromJwt(tokenRaw);
   }, [userAuth]);
 
-  /** 이벤트 전파 차단(부모 navigate 방지용) */
   const stopAll = (e: any) => {
     try {
       e.preventDefault?.();
@@ -143,69 +199,7 @@ export default function MachineButton({
     } catch {}
   };
 
-  const handleClick = (e: React.MouseEvent) => {
-    // 부모에서 mousedown/click로 navigate를 걸었을 가능성 때문에 최대한 차단
-    stopAll(e);
-
-    // 1) 빈 슬롯은 누구든 메뉴/이동 불가
-    if (isEmptyMachine) {
-      window.alert("빈 슬롯입니다.");
-      return;
-    }
-
-    // 2) 권한 확인이 안 되면(=auth가 없으면) 보수적으로 차단
-    if (resolvedAuth === null) {
-      window.alert("권한 정보를 확인할 수 없습니다. 다시 로그인해 주세요.");
-      return;
-    }
-
-    // 3) auth < 1 이면 메뉴 자체를 열지 않음 + alert 1번
-    if (resolvedAuth < 1) {
-      window.alert("권한이 부족합니다.");
-      return;
-    }
-
-    // ✅ 여기까지 왔으면 정상적으로 메뉴 토글
-    toggle();
-  };
-
-  const buildInfoIntent = (): InfoIntent => {
-    const progressEmpty = !Number.isFinite(progress);
-    const shipDateEmpty = shipDateText === "-";
-    const managerEmpty = !manager || manager.trim().length === 0;
-
-    return {
-      machineId: title ?? "",
-      fields: { progressEmpty, shipDateEmpty, managerEmpty },
-      values: {
-        progress: Number.isFinite(progress) ? progress : null,
-        shipDate: shipDateEmpty ? null : shipDateText,
-        manager: manager ?? null,
-      },
-      hasAnyEmpty: progressEmpty || shipDateEmpty || managerEmpty,
-      setAt: new Date().toISOString(),
-      origin: "dashboard",
-      version: 1,
-    };
-  };
-
-  const storeSelection = (machineId: string) => {
-    try {
-      localStorage.setItem(LS.SELECTED_IS_EMPTY, "0");
-      localStorage.setItem(LS.SELECTED_ID, machineId);
-      localStorage.setItem(LS.SELECTED_AT, new Date().toISOString());
-    } catch {}
-  };
-
-  const storeInfoIntent = (intent: InfoIntent) => {
-    try {
-      localStorage.setItem(LS.INTENT, JSON.stringify(intent));
-    } catch {}
-    (window as any).__MACHINE_INFO_INTENT__ = intent;
-  };
-
   const guardMenuAction = (): boolean => {
-    // 메뉴 버튼을 눌렀을 때도 안전하게 2중 방어
     if (isEmptyMachine) {
       window.alert("빈 슬롯입니다.");
       return false;
@@ -221,12 +215,103 @@ export default function MachineButton({
     return true;
   };
 
-  const handleOpenInfo = () => {
+  const storeSelection = (machineId: string) => {
+    try {
+      localStorage.setItem(LS.SELECTED_IS_EMPTY, "0");
+      localStorage.setItem(LS.SELECTED_ID, machineId);
+      localStorage.setItem(LS.SELECTED_AT, new Date().toISOString());
+
+      // ✅ 추가: 장비정보 페이지가 slot/site로 진입할 수 있게 저장
+      localStorage.setItem(LS.SELECTED_SLOT, String(slotCode ?? "").toUpperCase());
+
+      // site는 DashboardMain이 계속 덮어쓰고 있지만, 혹시 없으면 현재값 유지
+      const curSite = localStorage.getItem(LS.SELECTED_SITE);
+      if (!curSite) localStorage.setItem(LS.SELECTED_SITE, "");
+    } catch {}
+  };
+
+  const buildBaseIntent = (): InfoIntentV2 => {
+    return {
+      machineId: title ?? "",
+      slotCode: String(slotCode ?? "").toUpperCase(),
+      site: (localStorage.getItem(LS.SELECTED_SITE) ?? "").trim() || null,
+      values: {
+        progress: Number.isFinite(progress) ? progress : null,
+        shipDate: shipDateText === "-" ? null : shipDateText,
+        manager: manager ?? null,
+        customer: null,
+        serialNumber: null,
+        chillerSerialNumber: null,
+        note: null,
+        status: null,
+      },
+      setAt: new Date().toISOString(),
+      origin: "dashboard",
+      version: 2,
+    };
+  };
+
+  const storeInfoIntent = (intent: InfoIntentV2) => {
+    try {
+      localStorage.setItem(LS.INTENT, JSON.stringify(intent));
+    } catch {}
+    (window as any).__MACHINE_INFO_INTENT__ = intent;
+  };
+
+  const handleClick = (e: React.MouseEvent) => {
+    stopAll(e);
+    if (isEmptyMachine) {
+      window.alert("빈 슬롯입니다.");
+      return;
+    }
+    if (resolvedAuth === null) {
+      window.alert("권한 정보를 확인할 수 없습니다. 다시 로그인해 주세요.");
+      return;
+    }
+    if (resolvedAuth < 1) {
+      window.alert("권한이 부족합니다.");
+      return;
+    }
+    toggle();
+  };
+
+  const handleOpenInfo = async () => {
     if (!guardMenuAction()) return;
+
     try {
       storeSelection(title);
-      storeInfoIntent(buildInfoIntent());
-    } catch {}
+
+      // 1) 우선 기본 intent 저장(즉시 프리필 가능)
+      const base = buildBaseIntent();
+      storeInfoIntent(base);
+
+      // 2) 서버에서 최신값(특히 chiller_serial_number) 가져와서 intent 보강
+      const site = (localStorage.getItem(LS.SELECTED_SITE) ?? "").trim() || null;
+      const detail = await fetchEquipmentDetailBySlot(site, slotCode);
+
+      if (detail) {
+        const patched: InfoIntentV2 = {
+          ...base,
+          machineId: String(detail.machine_id ?? base.machineId ?? ""),
+          site: String(detail.site ?? base.site ?? "") || null,
+          values: {
+            ...base.values,
+            customer: detail.customer ?? null,
+            serialNumber: detail.serial_number ?? null,
+            chillerSerialNumber: detail.chiller_serial_number ?? null,
+            note: detail.note ?? null,
+            status:
+              detail.status === "가능" ? "가능" : detail.status === "불가능" ? "불가능" : null,
+          },
+          setAt: new Date().toISOString(),
+        };
+        storeInfoIntent(patched);
+      }
+    } catch {
+      // 실패해도 페이지 이동은 진행(최소한 base intent는 저장됨)
+    }
+
+    closeMenu();
     onOpenInfo?.();
   };
 
@@ -235,6 +320,7 @@ export default function MachineButton({
     try {
       storeSelection(title);
     } catch {}
+    closeMenu();
     onOpenChecklist?.(title);
   };
 
@@ -243,13 +329,26 @@ export default function MachineButton({
     try {
       storeSelection(title);
     } catch {}
+    closeMenu();
     onOpenMove?.(title);
+  };
+
+  const handleOpenRowdata = () => {
+    if (!guardMenuAction()) return;
+    try {
+      storeSelection(title);
+    } catch {}
+    closeMenu();
+    if (onOpenRowdata) {
+      onOpenRowdata(title);
+      return;
+    }
+    navigate("/SetupDefectEntryPage");
   };
 
   const handleShip = async () => {
     if (!guardMenuAction()) return;
 
-    // eslint-disable-next-line no-alert
     const ok =
       typeof window !== "undefined" &&
       window.confirm(`[${slotCode}] 슬롯의 ${title} 장비를 출하 처리할까요?`);
@@ -258,7 +357,7 @@ export default function MachineButton({
     try {
       await shipEquipment(slotCode);
       alert("출하 처리 완료!");
-      setOpenLocal(false);
+      closeMenu();
       onShipped?.(slotCode);
     } catch (e: any) {
       console.error(e);
@@ -267,6 +366,7 @@ export default function MachineButton({
   };
 
   const menuItems = [
+    { label: "🧾 Rowdata 입력", onClick: handleOpenRowdata },
     { label: "🛠 장비 정보 입력", onClick: handleOpenInfo },
     { label: "✅ 체크리스트", onClick: handleOpenChecklist },
     { label: "🔁 장비 이동", onClick: handleOpenMove },
@@ -280,7 +380,6 @@ export default function MachineButton({
         progress
       )} ${className}`}
       title="메뉴 보기"
-      // ✅ 부모가 onMouseDown으로 navigate 걸어도 최대한 막기
       onMouseDown={stopAll}
       onPointerDown={stopAll}
       onClick={handleClick}

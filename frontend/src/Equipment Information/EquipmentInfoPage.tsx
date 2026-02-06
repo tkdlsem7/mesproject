@@ -1,11 +1,9 @@
 // src/pages/EquipmentInfoPage.tsx
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useAuth } from "../lib/AuthContext"; // ✅ 경로 맞추기
+import { useAuth } from "../lib/AuthContext";
 
-/* -----------------------------------------------------------------------------
-  공통 유틸
------------------------------------------------------------------------------ */
+/* ----------------------------------------------------------------------------- */
 export const API_BASE =
   process.env.NODE_ENV === "production" ? "/api" : "http://localhost:8000/api";
 
@@ -28,7 +26,8 @@ async function fetchEquipmentOptionCodes(machineId: string): Promise<string[]> {
   return Array.isArray(data?.option_codes) ? (data.option_codes as string[]) : [];
 }
 
-// 전체 옵션 목록 조회(이름 매칭용)
+type OptionRow = { id: number; name: string };
+
 async function fetchAllTaskOptions(): Promise<OptionRow[]> {
   const res = await fetch(`${API_BASE}/task-options?q=&limit=1000`, {
     credentials: "include",
@@ -39,7 +38,6 @@ async function fetchAllTaskOptions(): Promise<OptionRow[]> {
   return Array.isArray(list) ? list : [];
 }
 
-// (선택) 이미 저장된 입고일을 불러올 수 있도록 “있으면” 조회
 async function tryFetchReceiptDate(machineId: string): Promise<string | null> {
   const mid = machineId.trim();
   if (!mid) return null;
@@ -64,11 +62,60 @@ async function tryFetchReceiptDate(machineId: string): Promise<string | null> {
           : (data?.receive_date ?? data?.receiveDate ?? data?.date ?? null);
 
       if (typeof v === "string" && v.trim()) return v.slice(0, 10);
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
   return null;
+}
+
+/** ✅ 추가: 슬롯+사이트로 equip_progress 상세 불러오기 */
+type EquipDetailRes = {
+  row_no: number;
+  machine_id?: string | null;
+  shipping_date?: string | null;
+  manager?: string | null;
+  customer?: string | null;
+  slot_code?: string;
+  site?: string | null;
+
+  serial_number?: string | null;
+  chiller_serial_number?: string | null;
+
+  status?: "가능" | "불가능" | null;
+  note?: string | null;
+
+  // (선택) 백엔드가 같이 내려주면 사용
+  receive_date?: string | null;
+};
+
+async function fetchEquipmentDetailBySlot(
+  site: string,
+  slotCode: string
+): Promise<EquipDetailRes | null> {
+  const slot = (slotCode || "").trim().toUpperCase(); // ✅ 대문자
+  if (!slot) return null;
+
+  const url = `${API_BASE}/dashboard/equipment/detail?site=${encodeURIComponent(
+    (site || "").trim()
+  )}&slot_code=${encodeURIComponent(slot)}`;
+
+  try {
+    const res = await fetch(url, {
+      credentials: "include",
+      headers: { ...authHeaders() },
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      console.error("[detail] FAIL", res.status, url, txt); // ✅ 원인 확인 가능
+      return null;
+    }
+
+    const data = (await res.json()) as EquipDetailRes;
+    return data;
+  } catch (e) {
+    console.error("[detail] ERROR", url, e);
+    return null;
+  }
 }
 
 const safeGet = (k: string) => {
@@ -85,11 +132,6 @@ const useQuery = () => {
   return useMemo(() => new URLSearchParams(search), [search]);
 };
 
-/* -----------------------------------------------------------------------------
-  타입
------------------------------------------------------------------------------ */
-type OptionRow = { id: number; name: string };
-
 type InfoIntentLite = {
   machineId?: string;
   values?: {
@@ -99,13 +141,12 @@ type InfoIntentLite = {
     customer?: string | null;
     status?: "가능" | "불가능" | string | null;
     serialNumber?: string | null;
+    // ✅ 추가
+    chillerSerialNumber?: string | null;
     note?: string | null;
   };
 };
 
-/* -----------------------------------------------------------------------------
-  공용 카드 래퍼 (Shell)
------------------------------------------------------------------------------ */
 const Shell: React.FC<{
   children: React.ReactNode;
   className?: string;
@@ -124,9 +165,7 @@ const Shell: React.FC<{
   </section>
 );
 
-/* -----------------------------------------------------------------------------
-  옵션 선택 모달
------------------------------------------------------------------------------ */
+/* 옵션 선택 모달(생략: 기존 그대로) */
 const OptionSelectModal: React.FC<{
   open: boolean;
   initialSelected: OptionRow[];
@@ -266,28 +305,22 @@ const OptionSelectModal: React.FC<{
   );
 };
 
-/* -----------------------------------------------------------------------------
-  메인 페이지
------------------------------------------------------------------------------ */
 const EquipmentInfoPage: React.FC = () => {
   const query = useQuery();
   const navigate = useNavigate();
 
-  // ✅ 전역 auth 사용 (auth >= 1 이면 수정/입력 가능)
   const { auth } = useAuth();
   const canEdit = (auth ?? 0) >= 1;
 
-  // 진입정보
   const site = query.get("site") ?? safeGet("selected_site") ?? "본사";
   const line = query.get("line") ?? safeGet("selected_line") ?? "A동";
   const slot = query.get("slot") ?? safeGet("selected_slot") ?? "-";
 
-  const emptyFlag = safeGet("selected_machine_is_empty"); // "1" | "0" | null
+  const emptyFlag = safeGet("selected_machine_is_empty");
   const machineFromQuery = query.get("machine");
   const machineFromStorage = emptyFlag === "1" ? "" : safeGet("selected_machine_id") ?? "";
   const machineInit = emptyFlag === "1" ? "" : ((machineFromQuery ?? machineFromStorage) || "").trim();
 
-  // 폼 상태
   const [machineId, setMachineId] = useState<string>(machineInit);
   const [shippingDate, setShippingDate] = useState<string>("");
   const [receiveDate, setReceiveDate] = useState<string>("");
@@ -295,6 +328,10 @@ const EquipmentInfoPage: React.FC = () => {
   const [customer, setCustomer] = useState<string>("");
   const [status, setStatus] = useState<"가능" | "불가능">("불가능");
   const [serialNumber, setSerialNumber] = useState<string>("");
+
+  // ✅ 칠러 시리얼
+  const [chillerSerialNumber, setChillerSerialNumber] = useState<string>("");
+
   const [note, setNote] = useState<string>("");
 
   const [saving, setSaving] = useState(false);
@@ -302,11 +339,12 @@ const EquipmentInfoPage: React.FC = () => {
   const [selectedOptions, setSelectedOptions] = useState<OptionRow[]>([]);
   const [optOpen, setOptOpen] = useState(false);
 
-  // 사용자가 옵션/입고일을 수동으로 만졌는지 추적
   const optionsDirtyRef = useRef(false);
   const receiveDirtyRef = useRef(false);
 
-  // 최초 안내 1회
+  /** ✅ 상세 1회만 로드 */
+  const detailLoadedRef = useRef(false);
+
   const announcedRef = useRef(false);
   useEffect(() => {
     if (announcedRef.current) return;
@@ -314,7 +352,6 @@ const EquipmentInfoPage: React.FC = () => {
     alert(`${site} > ${line} > ${slot} / ${machineId || "-"} 호기를 선택하셨습니다.`);
   }, [site, line, slot, machineId]);
 
-  // 빈 슬롯이면 초기화
   useEffect(() => {
     const isEmpty = emptyFlag === "1" || !machineInit;
     if (isEmpty) {
@@ -325,6 +362,7 @@ const EquipmentInfoPage: React.FC = () => {
       setCustomer("");
       setStatus("불가능");
       setSerialNumber("");
+      setChillerSerialNumber("");
       setNote("");
 
       try {
@@ -337,7 +375,7 @@ const EquipmentInfoPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 프리필: 빈 슬롯 아니면 intent 반영
+  /** 기존 intent(로컬) 우선 채우기 */
   useEffect(() => {
     const isEmpty = emptyFlag === "1" || !machineInit;
     if (isEmpty) return;
@@ -370,15 +408,78 @@ const EquipmentInfoPage: React.FC = () => {
       if ("manager" in v && typeof v.manager === "string") setManager(v.manager ?? "");
       if ("customer" in v && typeof v.customer === "string") setCustomer(v.customer ?? "");
       if ("serialNumber" in v && typeof v.serialNumber === "string") setSerialNumber(v.serialNumber ?? "");
+
+      if ("chillerSerialNumber" in v && typeof v.chillerSerialNumber === "string") {
+        setChillerSerialNumber(v.chillerSerialNumber ?? "");
+      }
+
       if ("note" in v && typeof v.note === "string") setNote(v.note ?? "");
       if ("status" in v && (v.status === "가능" || v.status === "불가능")) setStatus(v.status);
-    } catch {
-      // ignore
-    }
+    } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 기존 입고일 자동 조회: receiveDate가 비어있고, 사용자가 아직 안 건드렸을 때만 채움
+  /** ✅ DB 최신값(특히 chiller_serial_number) 로드해서 덮어쓰기 */
+  useEffect(() => {
+    const isEmpty = emptyFlag === "1";
+    const slotNorm = (slot || "").trim().toUpperCase();
+    const siteNorm = (site || "").trim();
+
+    if (isEmpty) return;
+    if (!slotNorm || slotNorm === "-") return;
+
+    if (detailLoadedRef.current) return;
+
+    let aborted = false;
+
+    (async () => {
+      const d = await fetchEquipmentDetailBySlot(siteNorm, slotNorm);
+      if (aborted) return;
+
+      if (!d) {
+        // ✅ 실패면 다음에도 다시 시도할 수 있게 ref를 true로 만들지 않음
+        return;
+      }
+
+      // ✅ 성공했을 때만 true
+      detailLoadedRef.current = true;
+
+      // 서버 값으로 state 갱신
+      if (typeof d.machine_id === "string") setMachineId(d.machine_id ?? "");
+      if (typeof d.shipping_date === "string")
+        setShippingDate(d.shipping_date ? d.shipping_date.slice(0, 10) : "");
+
+      if (typeof d.manager === "string") setManager(d.manager ?? "");
+      if (typeof d.customer === "string") setCustomer(d.customer ?? "");
+
+      if (typeof d.serial_number === "string") setSerialNumber(d.serial_number ?? "");
+
+      // ✅ 키가 snake/camel 둘 다 대비 (백엔드/프론트 혼재 대비)
+      const ch =
+        typeof (d as any).chiller_serial_number === "string"
+          ? (d as any).chiller_serial_number
+          : typeof (d as any).chillerSerialNumber === "string"
+            ? (d as any).chillerSerialNumber
+            : "";
+
+      setChillerSerialNumber(ch ?? "");
+
+      if (typeof d.note === "string") setNote(d.note ?? "");
+      if (d.status === "가능" || d.status === "불가능") setStatus(d.status);
+
+      if (!receiveDirtyRef.current && !receiveDate) {
+        const rd = (d as any).receive_date;
+        if (typeof rd === "string" && rd.trim()) setReceiveDate(rd.slice(0, 10));
+      }
+    })();
+
+    return () => {
+      aborted = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** 입고일은 receipt_log에서 자동 조회 */
   useEffect(() => {
     let aborted = false;
 
@@ -402,7 +503,7 @@ const EquipmentInfoPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [machineId]);
 
-  // 장비의 기존 옵션 불러오기 → 선택 반영 (자동 동기화)
+  /** 옵션은 machineId 기반으로 로드 */
   useEffect(() => {
     let aborted = false;
     const load = async () => {
@@ -428,9 +529,7 @@ const EquipmentInfoPage: React.FC = () => {
 
         setSelectedOptions(picked);
         optionsDirtyRef.current = false;
-      } catch {
-        // ignore
-      }
+      } catch {}
     };
     load();
     return () => {
@@ -440,9 +539,8 @@ const EquipmentInfoPage: React.FC = () => {
 
   const pageTitle = machineId ? `${machineId} 장비 정보 수정` : "장비 정보 입력";
 
-  // 옵션 모달 콜백
   const handleOptionConfirm = (rows: OptionRow[]) => {
-    if (!canEdit) return; // ✅ 권한 없으면 수정 불가
+    if (!canEdit) return;
     const map = new Map<number, OptionRow>();
     rows.forEach((r) => map.set(r.id, r));
     setSelectedOptions(Array.from(map.values()));
@@ -451,14 +549,12 @@ const EquipmentInfoPage: React.FC = () => {
   };
 
   const removeOne = (id: number) => {
-    if (!canEdit) return; // ✅ 권한 없으면 수정 불가
+    if (!canEdit) return;
     setSelectedOptions((prev) => prev.filter((r) => r.id !== id));
     optionsDirtyRef.current = true;
   };
 
-  // 저장
   const handleSave = async () => {
-    // ✅ 핵심: 권한 없으면 저장 차단
     if (!canEdit) {
       alert("권한이 부족하여 수정/입력할 수 없습니다.");
       return;
@@ -484,6 +580,9 @@ const EquipmentInfoPage: React.FC = () => {
         slot_code: slot,
         site: site || null,
         serial_number: serialNumber || null,
+
+        chiller_serial_number: chillerSerialNumber || null,
+
         status,
         note: note || null,
         option_ids: selectedOptions.map((o) => o.id),
@@ -518,6 +617,24 @@ const EquipmentInfoPage: React.FC = () => {
         throw new Error(detail);
       }
 
+      // ✅ 저장 후 로컬 intent도 갱신(다음 진입 시 최소한 같은 값 보장)
+      try {
+        const intent: InfoIntentLite = {
+          machineId: machineId.trim(),
+          values: {
+            shipDate: shippingDate || null,
+            receiveDate: receiveDate || null,
+            manager: manager || "",
+            customer: customer || "",
+            status,
+            serialNumber: serialNumber || null,
+            chillerSerialNumber: chillerSerialNumber || null,
+            note: note || null,
+          },
+        };
+        localStorage.setItem("machine_info_intent", JSON.stringify(intent));
+      } catch {}
+
       try {
         localStorage.setItem("dashboard_should_refresh", "1");
       } catch {}
@@ -535,7 +652,6 @@ const EquipmentInfoPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50 px-4 py-6">
       <div className="mx-auto w-full max-w-5xl">
-        {/* ✅ 권한 없을 때 안내 배너 */}
         {!canEdit && (
           <div className="mb-4 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-100">
             현재 계정은 <b>조회만 가능</b>합니다. (수정/입력/저장 불가)
@@ -654,9 +770,7 @@ const EquipmentInfoPage: React.FC = () => {
                         canEdit ? "border-gray-200" : "border-gray-200 bg-gray-100 cursor-not-allowed"
                       }`}
                     />
-                    <p className="mt-1 text-xs text-gray-400">
-                      입고일을 수정하면 receipt_log도 함께 갱신됩니다.
-                    </p>
+                    <p className="mt-1 text-xs text-gray-400">입고일을 수정하면 receipt_log도 함께 갱신됩니다.</p>
                   </div>
                 </div>
 
@@ -694,6 +808,19 @@ const EquipmentInfoPage: React.FC = () => {
                     value={serialNumber}
                     onChange={(e) => setSerialNumber(e.target.value)}
                     placeholder="Serial Number"
+                    disabled={!canEdit}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200 ${
+                      canEdit ? "border-gray-200" : "border-gray-200 bg-gray-100 cursor-not-allowed"
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">칠러 시리얼 넘버</label>
+                  <input
+                    value={chillerSerialNumber}
+                    onChange={(e) => setChillerSerialNumber(e.target.value)}
+                    placeholder="Chiller Serial Number"
                     disabled={!canEdit}
                     className={`w-full rounded-lg border px-3 py-2 text-sm focus:border-sky-400 focus:ring-2 focus:ring-sky-200 ${
                       canEdit ? "border-gray-200" : "border-gray-200 bg-gray-100 cursor-not-allowed"
@@ -764,7 +891,6 @@ const EquipmentInfoPage: React.FC = () => {
         </Shell>
       </div>
 
-      {/* ✅ 옵션 모달은 수정 권한 있을 때만 열릴 수 있게 위에서 막음 */}
       <OptionSelectModal
         open={optOpen}
         initialSelected={selectedOptions}
